@@ -12,20 +12,9 @@ export type SedimentreeMeta =
 /** Records are identified by the pair `(kind, head)`. */
 export type SedimentreeRecord = SedimentreeMeta & { bytes: Uint8Array }
 
-export type SedimentreeRemoteHeads = {
-  /** Source-scoped remote peer/storage identifier. */
-  remoteId: string
-  /** Remote graph heads in the same namespace as `SedimentreeHandle.heads()`. */
-  heads: string[]
-  timestamp: number
-}
-
 export interface SedimentreeSource {
   find(id: DocumentId): SedimentreeQuery
   create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle>
-
-  /** Optional source-specific controls for remote-head tracking. */
-  subscribeToRemoteHeads?(remoteIds: string[]): void
 
   flush?(ids?: DocumentId[]): Promise<void>
   shutdown?(): Promise<void>

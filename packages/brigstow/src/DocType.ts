@@ -30,8 +30,7 @@ export interface DocType<
   /** Used by find(url#heads); default false for non-Automerge types. */
   hasHeads?(state: State, heads: string[]): boolean
 
-  /** Optional point-in-time support. */
-  viewAt?(state: State, heads: string[]): State
+  viewAt(state: State, heads: string[]): View
 
   /** Optional event payload generation. Automerge returns patches here. */
   diff?(before: State, after: State): unknown[]

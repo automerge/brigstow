@@ -1,5 +1,6 @@
 packages:
   - packages/*
+  - examples/*
 catalog:
   '@automerge/automerge': ^3.3.2
   '@types/debug': ^4.1.13

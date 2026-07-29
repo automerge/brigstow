@@ -6,6 +6,9 @@
     },
     {
       "path": "./packages/brigstow-subduction"
+    },
+    {
+      "path": "./packages/automerge-repo"
     }
   ]
 }

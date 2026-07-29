@@ -3,11 +3,11 @@ import bs58check from "bs58check"
 import {
   uint8ArrayFromHexString,
   uint8ArrayToHexString,
-} from "./helpers/bufferFromHex.js"
+} from "@brigstow/brigstow/src/helpers/bufferFromHex.js"
 
 import type { Heads as AutomergeHeads } from "@automerge/automerge/slim"
-import { makeLogger } from "./Logger.js"
-import type { AnyDocumentId, DocumentId, BinaryDocumentId, LegacyDocumentId } from "./DocumentId.js"
+import { makeLogger } from "@brigstow/brigstow/src/Logger.js"
+import type { AnyDocumentId, DocumentId, BinaryDocumentId, LegacyDocumentId } from "@brigstow/brigstow/src/DocumentId.js"
 
 /**
  * A branded string representing a URL for a document, in the form `automerge:<base58check encoded

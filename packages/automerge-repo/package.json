@@ -1,5 +1,5 @@
 {
-  "name": "@brigstow/brigstow",
+  "name": "@brigstow/automerge-repo",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -22,8 +22,9 @@
   "license": "ISC",
   "dependencies": {
     "@automerge/automerge": "catalog:",
-    "@types/debug": "catalog:",
-    "debug": "catalog:",
+    "@brigstow/brigstow": "workspace:*",
+    "@brigstow/brigstow-subduction": "workspace:*",
+    "bs58check": "^4.0.0",
     "uuid": "catalog:"
   }
 }
