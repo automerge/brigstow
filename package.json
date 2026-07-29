@@ -1,0 +1,13 @@
+{
+  "name": "brigstow-workspace",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "packageManager": "pnpm@11.17.0",
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

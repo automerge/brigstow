@@ -1,0 +1,27 @@
+{
+  "name": "@brigstow/brigstow",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@automerge/automerge": "catalog:",
+    "@types/debug": "catalog:",
+    "bs58check": "^4.0.0",
+    "debug": "catalog:",
+    "uuid": "catalog:"
+  }
+}

@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+catalog:
+  '@automerge/automerge': ^3.3.2
+  '@types/debug': ^4.1.13
+  debug: ^4.4.3
+  uuid: ^14.0.1
