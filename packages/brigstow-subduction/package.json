@@ -21,7 +21,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@automerge/subduction": "^0.20.0",
+    "@automerge/subduction": "catalog:",
     "@brigstow/brigstow": "workspace:*",
     "uuid": "catalog:"
   }

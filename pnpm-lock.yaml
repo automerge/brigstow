@@ -9,6 +9,9 @@ catalogs:
     '@automerge/automerge':
       specifier: ^3.3.2
       version: 3.3.2
+    '@automerge/subduction':
+      specifier: ^0.20.1
+      version: 0.20.1
     '@types/debug':
       specifier: ^4.1.13
       version: 4.1.13
@@ -30,11 +33,14 @@ importers:
   examples/todo-app:
     dependencies:
       '@automerge/subduction':
-        specifier: ^0.20.0
-        version: 0.20.0
+        specifier: 'catalog:'
+        version: 0.20.1
       '@brigstow/automerge-repo':
         specifier: workspace:*
         version: link:../../packages/automerge-repo
+      '@brigstow/brigstow':
+        specifier: workspace:*
+        version: link:../../packages/brigstow
       '@brigstow/brigstow-subduction':
         specifier: workspace:*
         version: link:../../packages/brigstow-subduction
@@ -75,12 +81,12 @@ importers:
 
   packages/brigstow:
     dependencies:
-      '@automerge/automerge':
-        specifier: 'catalog:'
-        version: 3.3.2
       '@types/debug':
         specifier: 'catalog:'
         version: 4.1.13
+      bs58check:
+        specifier: ^4.0.0
+        version: 4.0.0
       debug:
         specifier: 'catalog:'
         version: 4.4.3
@@ -91,8 +97,8 @@ importers:
   packages/brigstow-subduction:
     dependencies:
       '@automerge/subduction':
-        specifier: ^0.20.0
-        version: 0.20.0
+        specifier: 'catalog:'
+        version: 0.20.1
       '@brigstow/brigstow':
         specifier: workspace:*
         version: link:../brigstow
@@ -105,8 +111,8 @@ packages:
   '@automerge/automerge@3.3.2':
     resolution: {integrity: sha512-9vCdCL7pdQwUra66SBxPVHr+/t9epXKni9KDeak2rNBFMzABVh2u6gSpcwxi3jkR5qr047jVqZv9DlrOfVxLFw==}
 
-  '@automerge/subduction@0.20.0':
-    resolution: {integrity: sha512-KSdNzuRm2zfZHIkQB8s7esXhCixbHq8kPe7iK2NtGglTvum+Njvnk+BKLl/XbkfhD5YLocWoEQ+MHIa9FmSqVQ==}
+  '@automerge/subduction@0.20.1':
+    resolution: {integrity: sha512-FeB9da3e5w/n9MloK+8DhEwcKPuTxu5c+c2fP/qrd6JfMCUau8zONfCd+UGDYD9U1nsU7FlpFpMFoXzqzuxJFA==}
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -810,7 +816,7 @@ snapshots:
 
   '@automerge/automerge@3.3.2': {}
 
-  '@automerge/subduction@0.20.0': {}
+  '@automerge/subduction@0.20.1': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:

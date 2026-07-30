@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { MemorySigner, MemoryStorage, Subduction } from "@automerge/subduction"
-import { Repo, type DocHandle } from "@brigstow/automerge-repo"
+import { Repo, type AutomergeUrl, type DocHandle } from "@brigstow/automerge-repo"
+import { stringifyDocId, type StringDocumentId } from "@brigstow/brigstow"
 import { SubductionSource } from "@brigstow/brigstow-subduction"
 
 interface Todo {
@@ -66,13 +67,17 @@ export default function App() {
 
   async function start() {
     try {
-      const createdHandle = await repo.create<TodoDocument>({ todos: [] })
+      const existingDocumentId = documentIdFromHash(window.location.hash)
+      const resolvedHandle = existingDocumentId
+        ? await repo.find<TodoDocument>("automerge:" + existingDocumentId as AutomergeUrl)
+        : await repo.create<TodoDocument>({ todos: [] })
       const onChange = () => setDocumentRevision(revision => revision + 1)
 
-      handle = createdHandle
-      createdHandle.on("change", onChange)
-      removeHandleListener = () => createdHandle.off("change", onChange)
+      handle = resolvedHandle
+      resolvedHandle.on("change", onChange)
+      removeHandleListener = () => resolvedHandle.off("change", onChange)
 
+      setDocumentHash(stringifyDocId(resolvedHandle.documentId))
       setDocumentRevision(revision => revision + 1)
       setPhase("ready")
       queueMicrotask(() => input?.focus())
@@ -242,6 +247,17 @@ function FilterButton(props: FilterButtonProps) {
       {props.children}
     </button>
   )
+}
+
+function documentIdFromHash(hash: string): StringDocumentId | undefined {
+  const documentId = decodeURIComponent(hash.replace(/^#/, "")).trim()
+  return documentId.length > 0 ? documentId as StringDocumentId : undefined
+}
+
+function setDocumentHash(documentId: string) {
+  const url = new URL(window.location.href)
+  url.hash = encodeURIComponent(documentId)
+  window.history.replaceState(null, "", url)
 }
 
 function shortDocumentId(documentId: string) {

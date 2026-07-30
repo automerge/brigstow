@@ -1,6 +1,6 @@
 import type { DocHandleEvents } from "./DocHandleEvents.js"
 import type { DocChange, DocState, DocType, DocView } from "./DocType.js"
-import type { BinaryDocumentId, DocumentId } from "./DocumentId.js"
+import { type StringDocumentId, type DocumentId, stringifyDocId } from "./DocumentId.js"
 import type { SedimentreeHandle } from "./SedimentreeSource.js"
 
 export class DocHandle<D extends DocType<any, any, any, any>> {
@@ -8,9 +8,10 @@ export class DocHandle<D extends DocType<any, any, any, any>> {
   readonly #doctype: D
   #document: DocState<D>
   #sedimentreeHandle: SedimentreeHandle
+  #changeListeners: Set<DocHandleEvents<D>["change"]> = new Set()
 
-  get documentId(): DocumentId {
-    return this.#sedimentreeHandle.documentId
+  get documentId(): StringDocumentId {
+    return stringifyDocId(this.#sedimentreeHandle.documentId)
   }
 
   /** @hidden */
@@ -36,19 +37,33 @@ export class DocHandle<D extends DocType<any, any, any, any>> {
     change: DocChange<D>,
   ) {
     this.#document = this.#doctype.change(this.#document, change)
+    for (const listener of this.#changeListeners) {
+      listener({
+        handle: this,
+        doc: this.#document
+      })
+    }
   }
 
   on<E extends keyof DocHandleEvents<D>>(
     event: E,
     fn: DocHandleEvents<D>[E]
-  ): this {
-    return this
+  ): (() => void) {
+    if (event === "change") {
+      this.#changeListeners.add(fn as DocHandleEvents<D>["change"])
+      return () => {
+        this.#changeListeners.delete(fn as DocHandleEvents<D>["change"])
+      }
+    }
+    return () => { }
   }
 
   off<E extends keyof DocHandleEvents<D>>(
     event: E,
-    fn?: DocHandleEvents<D>[E]
-  ): this {
-    return this
+    fn: DocHandleEvents<D>[E]
+  ) {
+    if (event === "change") {
+      this.#changeListeners.delete(fn as DocHandleEvents<D>["change"])
+    }
   }
 }

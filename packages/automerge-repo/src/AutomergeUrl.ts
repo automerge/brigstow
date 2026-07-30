@@ -7,7 +7,7 @@ import {
 
 import type { Heads as AutomergeHeads } from "@automerge/automerge/slim"
 import { makeLogger } from "@brigstow/brigstow/src/Logger.js"
-import type { AnyDocumentId, DocumentId, BinaryDocumentId, LegacyDocumentId } from "@brigstow/brigstow/src/DocumentId.js"
+import type { AnyDocumentId, StringDocumentId, DocumentId, LegacyDocumentId } from "@brigstow/brigstow/src/DocumentId.js"
 
 /**
  * A branded string representing a URL for a document, in the form `automerge:<base58check encoded
@@ -21,9 +21,9 @@ export const urlPrefix = "automerge:"
 
 export interface ParsedAutomergeUrl {
   /** unencoded DocumentId */
-  binaryDocumentId: BinaryDocumentId
+  binaryDocumentId: DocumentId
   /** bs58 encoded DocumentId */
-  documentId: DocumentId
+  documentId: StringDocumentId
   /** Optional array of heads, if specified in URL */
   heads?: UrlHeads
   /** Optional hex array of heads, in Automerge core format */
@@ -51,7 +51,7 @@ export const parseAutomergeUrl = (url: AutomergeUrl): ParsedAutomergeUrl => {
   const match = baseUrl.match(new RegExp(`^${urlPrefix}([^/]+)(?:\\/(.*))?$`))
   if (!match) throw new Error("Invalid document URL: " + url)
   const [, docMatch, pathStr] = match
-  const documentId = docMatch as DocumentId
+  const documentId = docMatch as StringDocumentId
   const binaryDocumentId = documentIdToBinary(documentId)
 
   if (!binaryDocumentId) throw new Error("Invalid document URL: " + url)
@@ -78,7 +78,7 @@ export const parseAutomergeUrl = (url: AutomergeUrl): ParsedAutomergeUrl => {
  * point in time. Throws on invalid input.
  */
 export const stringifyAutomergeUrl = (
-  arg: UrlOptions | DocumentId | BinaryDocumentId
+  arg: UrlOptions | StringDocumentId | DocumentId
 ): AutomergeUrl => {
   if (arg instanceof Uint8Array || typeof arg === "string") {
     return (urlPrefix +
@@ -158,10 +158,10 @@ export const isValidAutomergeUrl = (str: unknown): str is AutomergeUrl => {
   }
 }
 
-export const isValidDocumentId = (str: unknown): str is DocumentId => {
+export const isValidDocumentId = (str: unknown): str is StringDocumentId => {
   if (typeof str !== "string") return false
   // try to decode from base58
-  const binaryDocumentID = documentIdToBinary(str as DocumentId)
+  const binaryDocumentID = documentIdToBinary(str as StringDocumentId)
   return binaryDocumentID !== undefined
 }
 
@@ -172,15 +172,15 @@ export const isValidUuid = (str: unknown): str is LegacyDocumentId =>
  * Returns a new Automerge URL with a random UUID documentId. Called by Repo.create(), and also used by tests.
  */
 export const generateAutomergeUrl = (): AutomergeUrl => {
-  const documentId = Uuid.v4(undefined, new Uint8Array(16)) as BinaryDocumentId
+  const documentId = Uuid.v4(undefined, new Uint8Array(16)) as DocumentId
   return stringifyAutomergeUrl({ documentId })
 }
 
-export const documentIdToBinary = (docId: DocumentId) =>
-  bs58check.decodeUnsafe(docId) as BinaryDocumentId | undefined
+export const documentIdToBinary = (docId: StringDocumentId) =>
+  bs58check.decodeUnsafe(docId) as DocumentId | undefined
 
-export const binaryToDocumentId = (docId: BinaryDocumentId) =>
-  bs58check.encode(docId) as DocumentId
+export const binaryToDocumentId = (docId: DocumentId) =>
+  bs58check.encode(docId) as StringDocumentId
 
 export const encodeHeads = (heads: AutomergeHeads): UrlHeads =>
   heads.map(h => bs58check.encode(uint8ArrayFromHexString(h))) as UrlHeads
@@ -190,7 +190,7 @@ export const decodeHeads = (heads: UrlHeads): AutomergeHeads =>
 
 export const parseLegacyUUID = (str: string) => {
   if (!Uuid.validate(str)) return undefined
-  const documentId = Uuid.parse(str) as BinaryDocumentId
+  const documentId = Uuid.parse(str) as DocumentId
   return stringifyAutomergeUrl({ documentId })
 }
 
@@ -220,7 +220,7 @@ export const interpretAsDocumentId = (id: AnyDocumentId) => {
     log.warn(
       "Future versions will not support UUIDs as document IDs; use Automerge URLs instead."
     )
-    const binaryDocumentID = Uuid.parse(id) as BinaryDocumentId
+    const binaryDocumentID = Uuid.parse(id) as DocumentId
     return binaryToDocumentId(binaryDocumentID)
   }
 
@@ -231,6 +231,6 @@ export const interpretAsDocumentId = (id: AnyDocumentId) => {
 // TYPES
 
 export type UrlOptions = {
-  documentId: DocumentId | BinaryDocumentId
+  documentId: StringDocumentId | DocumentId
   heads?: UrlHeads
 }

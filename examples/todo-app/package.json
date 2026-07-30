@@ -10,8 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@automerge/subduction": "^0.20.0",
+    "@automerge/subduction": "catalog:",
     "@brigstow/automerge-repo": "workspace:*",
+    "@brigstow/brigstow": "workspace:*",
     "@brigstow/brigstow-subduction": "workspace:*",
     "solid-js": "^1.9.14"
   },

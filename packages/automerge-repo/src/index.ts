@@ -14,7 +14,7 @@ export class Repo {
   }
 
   find<T extends Record<string, unknown>>(url: AutomergeUrl): Query<AutomergeDocType<T>> {
-    const { documentId } = parseAutomergeUrl(url)
+    const { binaryDocumentId: documentId } = parseAutomergeUrl(url)
     return this.#repo.find(amDocType(), documentId)
   }
 

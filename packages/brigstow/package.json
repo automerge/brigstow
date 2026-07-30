@@ -21,8 +21,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@automerge/automerge": "catalog:",
     "@types/debug": "catalog:",
+    "bs58check": "^4.0.0",
     "debug": "catalog:",
     "uuid": "catalog:"
   }

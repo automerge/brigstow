@@ -3,7 +3,8 @@ import type { DocInit, DocState, DocType } from "./DocType.js";
 import type { DocumentId } from "./DocumentId.js";
 import type { SedimentreeSource } from "./SedimentreeSource.js";
 
-export { type SedimentreeSource } from "./SedimentreeSource.js"
+export { type DocumentId, type StringDocumentId, stringifyDocId } from "./DocumentId.js"
+export type { SedimentreeQuery, SedimentreeMeta, SedimentreeSource, SedimentreeHandle, SedimentreeCreateRequest, SedimentreeRecord } from "./SedimentreeSource.js"
 export { type DocType } from "./DocType.js"
 
 export class Repo {
