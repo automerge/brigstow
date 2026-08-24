@@ -17,10 +17,100 @@ export type QueryState<D> =
 
 type QueryListener<D> = (state: QueryState<D>) => void
 
+/**
+ * Map the handle in a `Query` while continuing to follow that query's state.
+ *
+ * The important thing to understand about `mapQuery` is that `ready` is not a
+ * final state. The source query can find a handle and later go back to
+ * `finding`, become `unavailable`, fail, or produce another handle. The mapped
+ * query follows all of those transitions; it is not a promise which settles
+ * after the first value.
+ *
+ * The mapping function is called whenever the source publishes `ready`, and
+ * only then. Its return value becomes the mapped query's `ready` handle. If the
+ * source later publishes a non-`ready` state, the mapped query immediately
+ * publishes the corresponding state and stops exposing the mapped handle. The
+ * handle is not disposed for you. A later `ready` state calls `f` again, even
+ * if the source publishes the same handle again.
+ *
+ * For example:
+ *
+ * ```text
+ * source: finding -> ready(A)    -> unavailable -> ready(B)
+ * mapped: finding -> ready(f(A)) -> unavailable -> ready(f(B))
+ * ```
+ *
+ * The source's `failed` state keeps its original error. If `f` itself throws,
+ * the mapped query becomes `failed`; that failure is also temporary if the
+ * source later publishes another state. If `f` causes a re-entrant source
+ * transition, only the result for the newest transition is published.
+ *
+ * The source's current state is processed before `mapQuery` returns, so an
+ * initially-ready source calls `f` immediately. `state()` is then a
+ * side-effect-free snapshot read. `subscribe()` observes future publications
+ * but does not replay the current state; to obtain both, subscribe first and
+ * then call `state()`.
+ *
+ * Calling `dispose()` stops following the source and clears the mapped query's
+ * listeners. It does not dispose either the source query or mapped handles.
+ */
 export function mapQuery<D, F>(query: Query<D>, f: (before: D) => F): Query<F> {
   return new MappedQuery(query, f)
 }
 
+/**
+ * Asynchronously map the handle in a `Query` while continuing to follow that
+ * query's state.
+ *
+ * As with {@link mapQuery}, the source's states are not final. The extra
+ * question here is what should happen when the source changes while `f` is
+ * still running. `mapQueryAsync` uses "latest source state wins" semantics.
+ * A source `ready` state makes the mapped query `finding` and starts `f`. If
+ * that invocation resolves while it is still the newest one, the mapped query
+ * becomes `ready` with its result. A throw or rejection instead makes it
+ * `failed`.
+ *
+ * If the source changes before `f` finishes, the in-progress invocation is no
+ * longer allowed to affect the mapped query. Its `AbortSignal` is aborted and:
+ *
+ * - a non-`ready` source state is immediately reflected by the mapped query;
+ * - another `ready` source state keeps the mapped query at `finding` and starts
+ *   a fresh invocation of `f`; and
+ * - any eventual result or error from the old invocation is ignored.
+ *
+ * For example:
+ *
+ * ```text
+ * source publishes ready(A)       mapped becomes finding; f(A) starts
+ * source publishes unavailable    mapped becomes unavailable; f(A) is signalled
+ * f(A) later resolves             nothing happens; that result is stale
+ * source publishes ready(B)       mapped becomes finding; f(B) starts
+ * f(B) resolves                   mapped becomes ready with f(B)'s result
+ * ```
+ *
+ * Cancellation is cooperative. Aborting the signal tells `f` that its result
+ * is no longer wanted, but cannot forcibly stop work which ignores the signal.
+ * Stale results are ignored either way. The mapper starts at a promise
+ * boundary, so rapid source changes can mean that `f` receives a signal which
+ * is already aborted.
+ *
+ * A previously mapped handle is not retained while a new mapping is running:
+ * the mapped query exposes `finding`, not stale data. Nor is that old handle
+ * disposed for you. Every source `ready` notification starts a new mapping,
+ * even if it contains the same handle as the previous notification.
+ *
+ * The source's current state is processed before `mapQueryAsync` returns. For
+ * an initially-ready source, that means the mapped query returns as `finding`
+ * with `f` scheduled to start. `state()` is a side-effect-free snapshot read.
+ * `subscribe()` observes future publications but does not replay the current
+ * state; to obtain both, subscribe first and then call `state()`.
+ *
+ * Non-`Error` throws and rejections are wrapped in an `Error`. Mapping failures
+ * are not final: a later source state is processed normally. Calling
+ * `dispose()` aborts any pending mapping, stops following the source, and
+ * clears the mapped query's listeners. It does not dispose the source query or
+ * mapped handles.
+ */
 export function mapQueryAsync<D, F>(
   query: Query<D>,
   f: (before: D, signal: AbortSignal) => PromiseLike<F>,
@@ -28,6 +118,15 @@ export function mapQueryAsync<D, F>(
   return new AsyncQuery(query, f)
 }
 
+/**
+ * Map a single snapshot of query state rather than following a live `Query`.
+ *
+ * `f` is called only when this particular snapshot is `ready`. Non-`ready`
+ * states are copied as-is, retaining the original error for `failed`. Because
+ * there is no subscription, later source transitions are not relevant here.
+ * Unlike {@link mapQuery}, an exception from `f` is allowed to propagate to the
+ * caller rather than being turned into a `failed` state.
+ */
 export function mapQueryState<D, F>(state: QueryState<D>, f: (before: D) => F): QueryState<F> {
   switch (state.type) {
     case "finding":
@@ -50,8 +149,7 @@ class MappedQuery<D, F> implements Query<F> {
 
   constructor(private query: Query<D>, private f: (before: D) => F) {
     // Subscribe before reading state so a transition cannot be missed between
-    // the initial read and installation of the subscription. Some Query
-    // implementations may synchronously replay their state from subscribe().
+    // the initial read and installation of the subscription.
     let replayedState = false
     this.#unsubWrapped = query.subscribe(state => {
       replayedState = true
