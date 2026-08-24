@@ -1,4 +1,5 @@
 import type { DocumentId } from "./DocumentId.js"
+import type { Query } from "./index.js";
 
 export type SedimentreeMeta =
   | { kind: "commit"; head: string; parents: string[] }
@@ -13,24 +14,12 @@ export type SedimentreeMeta =
 export type SedimentreeRecord = SedimentreeMeta & { bytes: Uint8Array }
 
 export interface SedimentreeSource {
-  find(id: DocumentId): SedimentreeQuery
+  find(id: DocumentId): Query<SedimentreeHandle>
   create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle>
 
   flush?(ids?: DocumentId[]): Promise<void>
   shutdown?(): Promise<void>
 }
-
-export interface SedimentreeQuery {
-  id(): DocumentId
-  state(): SedimentreeQueryState
-  subscribe(callback: (state: SedimentreeQueryState) => void): () => void
-}
-
-export type SedimentreeQueryState =
-  | { type: "finding" }
-  | { type: "unavailable" }
-  | { type: "failed"; error: Error }
-  | { type: "ready"; handle: SedimentreeHandle }
 
 export interface SedimentreeHandle {
   readonly documentId: DocumentId

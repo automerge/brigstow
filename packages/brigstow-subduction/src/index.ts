@@ -1,5 +1,5 @@
 import { Subduction, Sedimentree, Fragment, BlobMeta, SedimentreeId, CommitId, LooseCommit } from "@automerge/subduction/slim";
-import type { DocumentId, SedimentreeMeta, SedimentreeQuery, SedimentreeRecord, SedimentreeSource, SedimentreeCreateRequest, SedimentreeHandle } from "@brigstow/brigstow";
+import type { DocumentId, SedimentreeMeta, SedimentreeRecord, SedimentreeSource, SedimentreeCreateRequest, SedimentreeHandle, Query } from "@brigstow/brigstow";
 import * as uuid from "uuid"
 import { SubductionSedimentreeHandle } from "./SubductionSedimentreeHandle.js";
 
@@ -7,7 +7,7 @@ export class SubductionSource implements SedimentreeSource {
   constructor(private subduction: Subduction) {
 
   }
-  find(id: DocumentId): SedimentreeQuery {
+  find(id: DocumentId): Query<SedimentreeHandle> {
     throw new Error("Method not implemented.");
   }
   async create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle> {
