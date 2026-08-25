@@ -6,9 +6,9 @@ export class SubductionSedimentreeHandle implements SedimentreeHandle {
   readonly documentId: DocumentId;
   readonly documentType: string;
 
-  constructor(documentId: DocumentId, documentType: string) {
-    this.documentId = documentId;
-    this.documentType = documentType;
+  constructor(private sdn: Subduction, private tree: Sedimentree, documentId: DocumentId, documentType: string) {
+    this.documentId = documentId
+    this.documentType = documentType
   }
 
   heads(): string[] {

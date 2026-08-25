@@ -1,5 +1,5 @@
 import { Subduction, Sedimentree, Fragment, BlobMeta, SedimentreeId, CommitId, LooseCommit } from "@automerge/subduction/slim";
-import type { DocumentId, SedimentreeMeta, SedimentreeRecord, SedimentreeSource, SedimentreeCreateRequest, SedimentreeHandle, Query } from "@brigstow/brigstow";
+import type { DocumentId, SedimentreeMeta, SedimentreeRecord, SedimentreeSource, SedimentreeCreateRequest, SedimentreeHandle, Query, QueryState } from "@brigstow/brigstow";
 import * as uuid from "uuid"
 import { SubductionSedimentreeHandle } from "./SubductionSedimentreeHandle.js";
 
@@ -7,9 +7,12 @@ export class SubductionSource implements SedimentreeSource {
   constructor(private subduction: Subduction) {
 
   }
+
   find(id: DocumentId): Query<SedimentreeHandle> {
-    throw new Error("Method not implemented.");
+    const treeId = SedimentreeId.fromBytes(id)
+    return new PromiseQuery(id, this.#findHandle(treeId))
   }
+
   async create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle> {
     let { documentId, initialRecords } = request
     if (!documentId) {
@@ -54,5 +57,62 @@ export class SubductionSource implements SedimentreeSource {
   }
   shutdown?(): Promise<void> {
     throw new Error("Method not implemented.");
+  }
+
+  async #findHandle(docId: SedimentreeId): Promise<SedimentreeHandle> {
+    const [fragments, commits] = await Promise.all([
+      this.subduction.getFragments(docId),
+      this.subduction.getCommits(docId),
+    ])
+
+  }
+}
+
+class PromiseQuery<F> implements Query<F> {
+  private listeners: Set<((state: QueryState<F>) => void)> = new Set()
+  private value: F | null | undefined
+  private error: Error | undefined
+
+  constructor(private docId: DocumentId, private promise: Promise<F | null>) {
+    this.promise
+      .then(value => {
+        this.value = value
+      })
+      .catch(error => {
+        this.error = error
+      })
+      .finally(() => {
+        this.#onchange()
+      })
+  }
+
+  id(): DocumentId {
+    return this.docId
+  }
+
+  state(): QueryState<F> {
+    if (this.value !== undefined) {
+      if (this.value == null) {
+        return { type: "unavailable" }
+      } else {
+        return { type: "ready", handle: this.value }
+      }
+    }
+    if (this.error !== undefined) return { type: "failed", error: this.error }
+    return { type: "finding" }
+  }
+
+  subscribe(callback: (state: QueryState<F>) => void): () => void {
+    this.listeners.add(callback)
+    return () => {
+      this.listeners.delete(callback)
+    }
+  }
+
+  #onchange = () => {
+    const state = this.state()
+    for (const listener of this.listeners) {
+      listener(state)
+    }
   }
 }
