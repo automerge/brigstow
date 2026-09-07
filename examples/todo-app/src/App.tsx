@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { MemorySigner, MemoryStorage, Subduction } from "@automerge/subduction"
 import { Repo, type AutomergeUrl, type DocHandle } from "@brigstow/automerge-repo"
-import { stringifyDocId, type StringDocumentId } from "@brigstow/brigstow"
+import { type StringDocumentId } from "@brigstow/brigstow"
 import { SubductionSource } from "@brigstow/brigstow-subduction"
 
 interface Todo {
@@ -77,7 +77,7 @@ export default function App() {
       resolvedHandle.on("change", onChange)
       removeHandleListener = () => resolvedHandle.off("change", onChange)
 
-      setDocumentHash(stringifyDocId(resolvedHandle.documentId))
+      setDocumentHash(resolvedHandle.documentId)
       setDocumentRevision(revision => revision + 1)
       setPhase("ready")
       queueMicrotask(() => input?.focus())

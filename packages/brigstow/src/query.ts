@@ -3,6 +3,10 @@ import type { DocumentId } from "./DocumentId.js"
 export interface Query<D> {
   id(): DocumentId
   state(): QueryState<D>
+  /**
+   * Observe future state changes until unsubscribed; the current state is not
+   * replayed. To obtain both, subscribe first and then read state().
+   */
   subscribe(callback: (state: QueryState<D>) => void): () => void
 
   /** Release resources owned by this query. The query must not be used afterwards. */
@@ -47,9 +51,8 @@ type QueryListener<D> = (state: QueryState<D>) => void
  *
  * The source's current state is processed before `mapQuery` returns, so an
  * initially-ready source calls `f` immediately. `state()` is then a
- * side-effect-free snapshot read. `subscribe()` observes future publications
- * but does not replay the current state; to obtain both, subscribe first and
- * then call `state()`.
+ * side-effect-free snapshot read. `subscribe()` observes only future
+ * publications; to obtain both, subscribe first and then call `state()`.
  *
  * Calling `dispose()` stops following the source and clears the mapped query's
  * listeners. It does not dispose either the source query or mapped handles.
@@ -102,8 +105,8 @@ export function mapQuery<D, F>(query: Query<D>, f: (before: D) => F): Query<F> {
  * The source's current state is processed before `mapQueryAsync` returns. For
  * an initially-ready source, that means the mapped query returns as `finding`
  * with `f` scheduled to start. `state()` is a side-effect-free snapshot read.
- * `subscribe()` observes future publications but does not replay the current
- * state; to obtain both, subscribe first and then call `state()`.
+ * `subscribe()` observes only future publications; to obtain both, subscribe
+ * first and then call `state()`.
  *
  * Non-`Error` throws and rejections are wrapped in an `Error`. Mapping failures
  * are not final: a later source state is processed normally. Calling
@@ -148,16 +151,8 @@ class MappedQuery<D, F> implements Query<F> {
   #disposed = false
 
   constructor(private query: Query<D>, private f: (before: D) => F) {
-    // Subscribe before reading state so a transition cannot be missed between
-    // the initial read and installation of the subscription.
-    let replayedState = false
-    this.#unsubWrapped = query.subscribe(state => {
-      replayedState = true
-      this.#onchange(state)
-    })
-    if (!replayedState) {
-      this.#onchange(query.state())
-    }
+    this.#unsubWrapped = query.subscribe(this.#onchange)
+    this.#onchange(query.state())
   }
 
   id(): DocumentId {
@@ -231,15 +226,8 @@ export class AsyncQuery<D, F> implements Query<F> {
     private query: Query<D>,
     private f: (before: D, signal: AbortSignal) => PromiseLike<F>,
   ) {
-    // See MappedQuery's constructor for why subscription precedes the read.
-    let replayedState = false
-    this.#unsubWrapped = query.subscribe(state => {
-      replayedState = true
-      this.#onchange(state)
-    })
-    if (!replayedState) {
-      this.#onchange(query.state())
-    }
+    this.#unsubWrapped = query.subscribe(this.#onchange)
+    this.#onchange(query.state())
   }
 
   id(): DocumentId {

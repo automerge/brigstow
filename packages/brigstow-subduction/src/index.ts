@@ -114,7 +114,7 @@ class PromiseQuery<F> implements Query<F> {
 
   #onchange = () => {
     const state = this.state()
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       listener(state)
     }
   }
