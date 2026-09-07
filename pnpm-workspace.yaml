@@ -2,10 +2,10 @@ packages:
   - packages/*
   - examples/*
 catalog:
-  "@automerge/subduction": "^0.20.1"
+  "@automerge/subduction": "^0.21.0"
   '@automerge/automerge': ^3.3.2
   '@types/debug': ^4.1.13
   debug: ^4.4.3
   uuid: ^14.0.1
-minimumReleaseAgeExclude:
-  - '@automerge/subduction@0.20.1'
+overrides:
+  "@automerge/subduction": "file:../subduction/subduction_wasm"

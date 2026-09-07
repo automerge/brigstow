@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { MemorySigner, MemoryStorage, Subduction } from "@automerge/subduction"
+import { IndexedDbStorage, MemorySigner, Subduction } from "@automerge/subduction"
 import { Repo, type AutomergeUrl, type DocHandle } from "@brigstow/automerge-repo"
 import { type StringDocumentId } from "@brigstow/brigstow"
-import { SubductionSource } from "@brigstow/brigstow-subduction"
+import { ObservableStorage, SubductionSource } from "@brigstow/brigstow-subduction"
 
 interface Todo {
   id: string
@@ -17,12 +17,6 @@ type TodoDocument = {
 type Filter = "all" | "active" | "completed"
 type Phase = "loading" | "ready" | "error"
 type TodoHandle = DocHandle<TodoDocument>
-
-const subduction = new Subduction({
-  signer: MemorySigner.generate(),
-  storage: new MemoryStorage(),
-})
-const repo = new Repo(new SubductionSource(subduction))
 
 export default function App() {
   let handle: TodoHandle | undefined
@@ -67,6 +61,12 @@ export default function App() {
 
   async function start() {
     try {
+      const backend = await IndexedDbStorage.setup(window.indexedDB, "brigstow-todo")
+      const subduction = new Subduction({
+        signer: MemorySigner.generate(),
+        storage: new ObservableStorage(backend),
+      })
+      const repo = new Repo(new SubductionSource(subduction))
       const existingDocumentId = documentIdFromHash(window.location.hash)
       const resolvedHandle = existingDocumentId
         ? await repo.find<TodoDocument>("automerge:" + existingDocumentId as AutomergeUrl)

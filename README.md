@@ -28,3 +28,62 @@ The structure of the codebase at the moment is roughly this:
   `@automerge/automerge-repo`, implemented by defining an implementation
   of `DocType` for automerge documents and wrapping that around the
   core brigstow `Repo`
+
+## Local Subduction build
+
+The workspace overrides `@automerge/subduction` with the built package at
+`../subduction/subduction_wasm`. Build that sibling checkout before running
+`pnpm install`; its package exports use `dist/`, not the legacy `pkg-node/`.
+
+Fragment metadata uses `Uint8Array[]` checkpoints, each exactly 12 bytes (the
+prefix of a full commit ID). Heads and boundaries remain full hex-encoded IDs.
+Checkpoints returned by WASM can be cached using `cp.toBytes()` and passed back
+as Brigstow record metadata without reconstructing full commit IDs.
+
+## Subduction handles
+
+Wrap the backend **before** constructing Subduction so that local writes and
+inbound synchronization pass through the same observation layer:
+
+```ts
+import { MemorySigner, MemoryStorage, Subduction } from "@automerge/subduction"
+import { ObservableStorage, SubductionSource } from "@brigstow/brigstow-subduction"
+
+const storage = new ObservableStorage(new MemoryStorage())
+const subduction = new Subduction({ signer: MemorySigner.generate(), storage })
+const source = new SubductionSource(subduction) // reopened documents use type "automerge"
+```
+
+The todo example instead opens `IndexedDbStorage` asynchronously with database
+name `brigstow-todo`, then wraps it in `ObservableStorage`. This requires the local
+Subduction build to include the `idb` Cargo feature.
+
+All writers sharing a backend must share the wrapper; writes directly to the
+underlying backend (including from another tab/process) are not observed.
+`SubductionSource` rejects an unwrapped backend rather than returning stale handles.
+Pass a second constructor argument to configure the document type used on reopen;
+Subduction does not persist Brigstow's `documentType` field. Source lookup is local;
+the host is responsible for connecting peers and initiating document discovery/sync.
+
+Handles load an initial metadata snapshot before becoming available. Subsequent
+storage mutations, including batches and deletions, trigger coalesced reloads.
+`heads()` and `metadata()` are synchronous, defensive snapshots of the last
+completed load. `on("change", listener)` observes future snapshot changes; it does
+not replay the current state. An unchanged reload does not emit an event. A reload
+failure also emits change and makes snapshot reads throw until a later successful
+reload. Listener exceptions are logged without failing persistence or other listeners.
+Storage watchers use weak references, so handles require no separate disposal.
+
+`materialize()` loads blobs by `(kind, head)` in the supplied order, rejecting
+missing records. `apply()` merges a batch through Subduction, awaits its bounded
+sync round, then waits for the updated snapshot. Failed writes/syncs may still have
+persisted data; per-peer transport failures do not undo local persistence.
+
+The current implementation reloads metadata from storage rather than duplicating
+Subduction's minimization logic. It can expose redundant persisted records and
+loads compound storage entries (including their blobs) during refresh, but does
+not retain a blob cache. `notAncestorsOf` excludes the supplied heads and their
+known ancestors, following commit parents, fragment boundaries, and checkpoint
+coverage. It conservatively retains records when an opaque fragment prevents
+establishing ancestry; checkpoint-prefix coverage uses Subduction's compact
+matching semantics, not full commit identity equality.

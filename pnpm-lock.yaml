@@ -9,9 +9,6 @@ catalogs:
     '@automerge/automerge':
       specifier: ^3.3.2
       version: 3.3.2
-    '@automerge/subduction':
-      specifier: ^0.20.1
-      version: 0.20.1
     '@types/debug':
       specifier: ^4.1.13
       version: 4.1.13
@@ -21,6 +18,9 @@ catalogs:
     uuid:
       specifier: ^14.0.1
       version: 14.0.1
+
+overrides:
+  '@automerge/subduction': file:../subduction/subduction_wasm
 
 importers:
 
@@ -33,8 +33,8 @@ importers:
   examples/todo-app:
     dependencies:
       '@automerge/subduction':
-        specifier: 'catalog:'
-        version: 0.20.1
+        specifier: file:../../../subduction/subduction_wasm
+        version: file:../subduction/subduction_wasm
       '@brigstow/automerge-repo':
         specifier: workspace:*
         version: link:../../packages/automerge-repo
@@ -97,8 +97,8 @@ importers:
   packages/brigstow-subduction:
     dependencies:
       '@automerge/subduction':
-        specifier: 'catalog:'
-        version: 0.20.1
+        specifier: file:../../../subduction/subduction_wasm
+        version: file:../subduction/subduction_wasm
       '@brigstow/brigstow':
         specifier: workspace:*
         version: link:../brigstow
@@ -111,8 +111,8 @@ packages:
   '@automerge/automerge@3.3.2':
     resolution: {integrity: sha512-9vCdCL7pdQwUra66SBxPVHr+/t9epXKni9KDeak2rNBFMzABVh2u6gSpcwxi3jkR5qr047jVqZv9DlrOfVxLFw==}
 
-  '@automerge/subduction@0.20.1':
-    resolution: {integrity: sha512-FeB9da3e5w/n9MloK+8DhEwcKPuTxu5c+c2fP/qrd6JfMCUau8zONfCd+UGDYD9U1nsU7FlpFpMFoXzqzuxJFA==}
+  '@automerge/subduction@file:../subduction/subduction_wasm':
+    resolution: {directory: ../subduction/subduction_wasm, type: directory}
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -816,7 +816,7 @@ snapshots:
 
   '@automerge/automerge@3.3.2': {}
 
-  '@automerge/subduction@0.20.1': {}
+  '@automerge/subduction@file:../subduction/subduction_wasm': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:

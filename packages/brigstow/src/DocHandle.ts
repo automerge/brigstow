@@ -4,7 +4,6 @@ import { type StringDocumentId, type DocumentId, stringifyDocId } from "./Docume
 import type { SedimentreeHandle } from "./SedimentreeSource.js"
 
 export class DocHandle<D extends DocType<any, any, any, any>> {
-
   readonly #doctype: D
   #document: DocState<D>
   #sedimentreeHandle: SedimentreeHandle
