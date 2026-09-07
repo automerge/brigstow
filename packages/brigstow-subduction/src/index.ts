@@ -9,8 +9,7 @@ export class SubductionSource implements SedimentreeSource {
   }
 
   find(id: DocumentId): Query<SedimentreeHandle> {
-    const treeId = SedimentreeId.fromBytes(id)
-    return new PromiseQuery(id, this.#findHandle(treeId))
+    return new PromiseQuery(id, this.#findHandle(id, "automerge"))
   }
 
   async create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle> {
@@ -50,7 +49,7 @@ export class SubductionSource implements SedimentreeSource {
     const tree = new Sedimentree(fragments, commits)
     await this.subduction.storeSedimentree(sedimentreeId, tree, blobs)
 
-    return new SubductionSedimentreeHandle(documentId, request.documentType)
+    return new SubductionSedimentreeHandle(this.subduction, tree, documentId, request.documentType)
   }
   flush?(ids?: DocumentId[]): Promise<void> {
     throw new Error("Method not implemented.");
@@ -59,11 +58,15 @@ export class SubductionSource implements SedimentreeSource {
     throw new Error("Method not implemented.");
   }
 
-  async #findHandle(docId: SedimentreeId): Promise<SedimentreeHandle> {
+  async #findHandle(docId: DocumentId, docType: string): Promise<SedimentreeHandle> {
+    const treeId = SedimentreeId.fromBytes(docId)
     const [fragments, commits] = await Promise.all([
-      this.subduction.getFragments(docId),
-      this.subduction.getCommits(docId),
+      this.subduction.getFragments(treeId),
+      this.subduction.getCommits(treeId),
     ])
+
+    const tree = new Sedimentree(fragments ?? [], commits ?? [])
+    return new SubductionSedimentreeHandle(this.subduction, tree, docId, docType)
 
   }
 }

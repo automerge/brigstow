@@ -1,3 +1,4 @@
+import type { Sedimentree, Subduction } from "@automerge/subduction";
 import type { SedimentreeHandle } from "@brigstow/brigstow";
 import type { DocumentId } from "@brigstow/brigstow/src/DocumentId.js";
 import type { SedimentreeMeta, SedimentreeRecord } from "@brigstow/brigstow/src/SedimentreeSource.js";

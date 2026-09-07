@@ -13,7 +13,7 @@ export class Repo {
     this.#repo = new BrigstowRepo(source)
   }
 
-  find<T extends Record<string, unknown>>(url: AutomergeUrl): Query<AutomergeDocType<T>> {
+  find<T extends Record<string, unknown>>(url: AutomergeUrl): Query<DocHandle<T>> {
     const { binaryDocumentId: documentId } = parseAutomergeUrl(url)
     return this.#repo.find(amDocType(), documentId)
   }
