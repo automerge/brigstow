@@ -41,6 +41,9 @@ remain full hex-encoded IDs. The Subduction adapter accepts either hex case and
 returns lowercase hex, converting to bytes only at the WASM boundary. Metadata
 can be serialized as JSON and reused as Brigstow record metadata directly;
 checkpoints obtained from WASM directly can be converted with `cp.toHexString()`.
+Automerge exposes full hashes in its fragment checkpoints; the Automerge adapter
+truncates them to 24 characters and omits the redundant checkpoint for the
+fragment's own head, which is already represented by `head`.
 
 ## Saving document changes
 

@@ -34,7 +34,14 @@ export function amDocType<T extends Record<string, unknown>>(): AutomergeDocType
                     kind: "fragment",
                     boundary: f.boundary,
                     head: f.head,
+                    // Automerge exposes full hashes, including this fragment's
+                    // own head. Omit that redundant self-reference so it doesn't
+                    // suppress the head, and encode interior checkpoints as the
+                    // 12-byte prefixes required by Brigstow/Subduction.
+                    // TODO(alex): This should be handled in automerge or subduction
                     checkpoints: f.checkpoints
+                        .filter(checkpoint => checkpoint !== f.head)
+                        .map(checkpoint => checkpoint.slice(0, 24))
                 }))
                 const commits = Automerge.getCommits(state).map<SedimentreeMeta>(c => ({
                     kind: "commit",
