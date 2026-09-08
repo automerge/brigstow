@@ -1,18 +1,18 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
 import * as Automerge from "@automerge/automerge"
 import { MemorySigner, MemoryStorage, Subduction } from "@automerge/subduction"
 import { ObservableStorage, SubductionSource } from "@brigstow/brigstow-subduction"
 import { Repo, type AutomergeUrl } from "../src/index.js"
 
-test("a document created by one repo reloads from storage in a different repo", { timeout: 5000 }, async t => {
+function setup(t: TestContext) {
   const backend = new MemoryStorage()
   const nodes: Subduction[] = []
   t.after(async () => {
     await Promise.all(nodes.map(node => node.disconnectAll()))
   })
 
-  function openRepo() {
+  return function openRepo() {
     const node = new Subduction({
       signer: MemorySigner.generate(),
       storage: new ObservableStorage(backend),
@@ -20,7 +20,10 @@ test("a document created by one repo reloads from storage in a different repo", 
     nodes.push(node)
     return { repo: new Repo(new SubductionSource(node)), node }
   }
+}
 
+test("a document created by one repo reloads from storage in a different repo", { timeout: 5000 }, async t => {
+  const openRepo = setup(t)
   const initial = {
     title: "Stored document",
     todos: [{ id: "first", title: "Survive a refresh", completed: false }],
@@ -46,4 +49,45 @@ test("a document created by one repo reloads from storage in a different repo", 
   assert.equal(reloaded.documentId, original.documentId)
   assert.deepEqual(Automerge.toJS(reloaded.doc()), initial)
   assert.deepEqual(Automerge.getHeads(reloaded.doc()), heads)
+})
+
+test("rapid todo edits survive reload and a reopened handle can save further edits", { timeout: 5000 }, async t => {
+  const openRepo = setup(t)
+  type TodoDocument = { todos: { id: string; title: string; completed: boolean }[] }
+  const writer = openRepo()
+  const handle = await writer.repo.create<TodoDocument>({ todos: [] })
+  const url = `automerge:${handle.documentId}` as AutomergeUrl
+
+  // Like the UI, apply several changes synchronously without waiting for IO.
+  const saves = ["first", "second", "third"].map(id => handle.change(doc => {
+    doc.todos.push({ id, title: id, completed: false })
+  }))
+  saves.push(handle.change(doc => {
+    doc.todos[0]!.completed = true
+    doc.todos[1]!.title = "Edited title"
+    doc.todos.splice(2, 1)
+  }))
+  const expected = {
+    todos: [
+      { id: "first", title: "first", completed: true },
+      { id: "second", title: "Edited title", completed: false },
+    ],
+  }
+  assert.deepEqual(Automerge.toJS(handle.doc()), expected)
+  await Promise.all(saves)
+  const heads = Automerge.getHeads(handle.doc())
+  await writer.node.disconnectAll()
+
+  const reader = openRepo()
+  const reloaded = await reader.repo.find<TodoDocument>(url, { signal: AbortSignal.timeout(2000) })
+  assert.deepEqual(Automerge.toJS(reloaded.doc()), expected)
+  assert.deepEqual(Automerge.getHeads(reloaded.doc()), heads)
+
+  await reloaded.change(doc => { doc.todos[1]!.completed = true })
+  await reader.node.disconnectAll()
+  const third = openRepo()
+  const reopened = await third.repo.find<TodoDocument>(url, { signal: AbortSignal.timeout(2000) })
+  expected.todos[1]!.completed = true
+  assert.deepEqual(Automerge.toJS(reopened.doc()), expected)
+  assert.deepEqual(Automerge.getHeads(reopened.doc()), Automerge.getHeads(reloaded.doc()))
 })

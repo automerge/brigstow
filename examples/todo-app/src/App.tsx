@@ -25,6 +25,8 @@ export default function App() {
 
   const [phase, setPhase] = createSignal<Phase>("loading")
   const [failure, setFailure] = createSignal<string>()
+  const [pendingSaves, setPendingSaves] = createSignal(0)
+  const [saveFailure, setSaveFailure] = createSignal<string>()
   const [activeFilter, setActiveFilter] = createSignal<Filter>("all")
   const [documentRevision, setDocumentRevision] = createSignal(0)
 
@@ -52,12 +54,34 @@ export default function App() {
   })
 
   onMount(() => {
+    window.addEventListener("beforeunload", warnUnsavedChanges)
     void start()
   })
 
   onCleanup(() => {
     removeHandleListener?.()
+    window.removeEventListener("beforeunload", warnUnsavedChanges)
   })
+
+  function warnUnsavedChanges(event: BeforeUnloadEvent) {
+    if (pendingSaves() > 0 || saveFailure()) {
+      event.preventDefault()
+      event.returnValue = ""
+    }
+  }
+
+  async function changeDocument(change: Parameters<TodoHandle["change"]>[0]) {
+    if (!handle) return
+    setPendingSaves(count => count + 1)
+    try {
+      await handle.change(change)
+      setSaveFailure(undefined)
+    } catch (error) {
+      setSaveFailure(errorMessage(error))
+    } finally {
+      setPendingSaves(count => count - 1)
+    }
+  }
 
   async function start() {
     try {
@@ -94,7 +118,7 @@ export default function App() {
     const title = input?.value.trim()
     if (!title || !handle) return
 
-    handle.change(doc => {
+    void changeDocument(doc => {
       doc.todos.push({
         id: randomUUID(),
         title,
@@ -108,21 +132,21 @@ export default function App() {
   }
 
   function toggleTodo(id: string) {
-    handle?.change(doc => {
+    void changeDocument(doc => {
       const todo = doc.todos.find(candidate => candidate.id === id)
       if (todo) todo.completed = !todo.completed
     })
   }
 
   function removeTodo(id: string) {
-    handle?.change(doc => {
+    void changeDocument(doc => {
       const index = doc.todos.findIndex(todo => todo.id === id)
       if (index >= 0) doc.todos.splice(index, 1)
     })
   }
 
   function clearCompleted() {
-    handle?.change(doc => {
+    void changeDocument(doc => {
       for (let index = doc.todos.length - 1; index >= 0; index -= 1) {
         if (doc.todos[index]?.completed) doc.todos.splice(index, 1)
       }
@@ -223,6 +247,14 @@ export default function App() {
         </footer>
       </section>
 
+      <Show when={phase() === "ready"}>
+        <p class="app-footer" role="status" aria-live="polite">
+          {saveFailure()
+            ? `Could not save changes: ${saveFailure()}`
+            : pendingSaves() > 0 ? "Saving…" : "All changes saved"}
+        </p>
+      </Show>
+
       <p class="app-footer">
         Built with SolidJS and <code>@brigstow/automerge-repo</code>.
       </p>
@@ -274,8 +306,8 @@ function errorMessage(error: unknown) {
 function randomUUID() {
   if (crypto.randomUUID) return crypto.randomUUID();
   const b = crypto.getRandomValues(new Uint8Array(16));
-  b[6] = (b[6] & 0x0f) | 0x40; // version 4
-  b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+  b[6] = (b[6]! & 0x0f) | 0x40; // version 4
+  b[8] = (b[8]! & 0x3f) | 0x80; // variant 10
   const hex = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }

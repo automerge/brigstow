@@ -42,6 +42,19 @@ returns lowercase hex, converting to bytes only at the WASM boundary. Metadata
 can be serialized as JSON and reused as Brigstow record metadata directly;
 checkpoints obtained from WASM directly can be converted with `cp.toHexString()`.
 
+## Saving document changes
+
+`Repo.create()` persists the initial document before returning. `handle.change(fn)`
+updates the local view and emits `change` synchronously, then queues persistence.
+Its returned promise resolves after persistence/sync; use `await handle.change(fn)`
+or `await handle.flush()` before reopening the document elsewhere. Saves are
+serialized and only missing records are exported. Failures are logged and reject
+these promises; local edits remain in memory, and a later change retries missing
+records. `flush()` waits for queued work; it does not itself retry a failed save.
+
+The todo demo displays save status and warns before leaving with pending or failed
+saves. Browser shutdown cannot be relied upon to finish asynchronous writes.
+
 ## Subduction handles
 
 Wrap the backend **before** constructing Subduction so that local writes and
