@@ -52,11 +52,15 @@ export class Repo {
   }
 
   async create<D extends DocType<any, any, any, any>>(docType: D, value: DocInit<D>): Promise<DocHandle<D>> {
+    const document = docType.init(value)
+    const metas = Array.from(docType.sedimentree.metadata(document))
+    const data = await docType.sedimentree.materialize(document, metas)
+    const initialRecords: SedimentreeRecord[] = metas.map((meta, i) => ({ ...meta, bytes: data[i]! }))
     const sedimentreeHandle = await this.source.create({
       documentType: docType.name,
-      initialRecords: []
+      initialRecords
     })
-    return new DocHandle(sedimentreeHandle, docType, docType.init(value))
+    return new DocHandle(sedimentreeHandle, docType, document)
   }
 }
 

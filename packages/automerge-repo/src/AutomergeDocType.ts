@@ -29,7 +29,8 @@ export function amDocType<T extends Record<string, unknown>>(): AutomergeDocType
         },
         sedimentree: {
             metadata: function(state: Automerge.next.Doc<T>, opts?: { notAncestorsOf?: string[] }): Iterable<SedimentreeMeta> {
-                const fragments = Automerge.getFragmentMetadata(state).map<SedimentreeMeta>(f => ({
+                // Level 0 represents loose commits, exported separately below.
+                const fragments = Automerge.getFragmentMetadata(state, { start: 1 }).map<SedimentreeMeta>(f => ({
                     kind: "fragment",
                     boundary: f.boundary,
                     head: f.head,
@@ -44,6 +45,7 @@ export function amDocType<T extends Record<string, unknown>>(): AutomergeDocType
             },
             materialize: function(state: Automerge.next.Doc<T>, metas: SedimentreeMeta[]): Promise<Uint8Array[]> | Uint8Array[] {
                 const fragsByHead = new Map(Automerge.getFragments(state).map(f => [f.head, f]))
+                const commitsByHead = new Map(Automerge.getCommits(state).map(c => [c.head, c]))
                 const result: Uint8Array[] = []
                 for (const meta of metas) {
                     if (meta.kind === "fragment") {
@@ -53,10 +55,11 @@ export function amDocType<T extends Record<string, unknown>>(): AutomergeDocType
                         }
                         result.push(frag.bytes)
                     } else if (meta.kind === "commit") {
-                        // TODO: This doesn't actually export the original commit
-                        // we need to add Automerge.getChange really
-                        const commit = Automerge.saveBundle(state, [meta.head])
-                        result.push(commit)
+                        const commit = commitsByHead.get(meta.head)
+                        if (!commit) {
+                            throw new Error("unknown commit")
+                        }
+                        result.push(commit.bytes)
                     }
                 }
                 return Promise.resolve(result)
