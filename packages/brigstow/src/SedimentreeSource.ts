@@ -7,8 +7,8 @@ export type SedimentreeMeta =
       kind: "fragment"
       head: string
       boundary: string[]
-      /** 12-byte commit-ID prefixes, not full commit IDs. */
-      checkpoints: Uint8Array[]
+      /** Hex-encoded 12-byte commit-ID prefixes (24 hex characters), not full commit IDs. */
+      checkpoints: string[]
     }
 
 /** Records are identified by the pair `(kind, head)`. */

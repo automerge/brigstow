@@ -12,11 +12,18 @@ export class WasmScope {
   free(): void { for (const value of this.#values.reverse()) value.free() }
 }
 
-export const hex = (bytes: Uint8Array): string => Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("")
+/** Validate before decoding: parseInt alone silently accepts malformed hex. */
+function checkpointBytes(checkpoint: string): Uint8Array {
+  if (typeof checkpoint !== "string" || checkpoint.length !== 24 || !/^[0-9a-fA-F]+$/.test(checkpoint)) {
+    throw new Error("Invalid checkpoint: expected 24 hex characters (12 bytes)")
+  }
+  return Uint8Array.from({ length: 12 }, (_, i) => parseInt(checkpoint.slice(i * 2, i * 2 + 2), 16))
+}
+
 export const recordKey = (meta: SedimentreeMeta): string => `${meta.kind}:${meta.head}`
 export const copyMeta = (meta: SedimentreeMeta): SedimentreeMeta => meta.kind === "commit"
   ? { ...meta, parents: [...meta.parents] }
-  : { ...meta, boundary: [...meta.boundary], checkpoints: meta.checkpoints.map(cp => cp.slice()) }
+  : { ...meta, boundary: [...meta.boundary], checkpoints: [...meta.checkpoints] }
 
 export interface Snapshot {
   records: SedimentreeMeta[]
@@ -44,7 +51,7 @@ export async function readSnapshot(storage: ObservableStorage, documentId: Docum
         ? { kind: "commit", head: scope.own(payload.commitId).toHexString(), parents: ids(payload.parents).sort() }
         : {
           kind: "fragment", head: scope.own(payload.head).toHexString(), boundary: ids(payload.boundary).sort(),
-          checkpoints: payload.checkpoints.map(cp => scope.own(cp).toBytes()),
+          checkpoints: payload.checkpoints.map(cp => scope.own(cp).toHexString()),
         }
       entries.push({ meta, digest })
     }
@@ -54,7 +61,7 @@ export async function readSnapshot(storage: ObservableStorage, documentId: Docum
     const checkpoints = new Set<string>()
     for (const meta of records) {
       for (const dependency of meta.kind === "commit" ? meta.parents : meta.boundary) referenced.add(dependency)
-      if (meta.kind === "fragment") for (const cp of meta.checkpoints) checkpoints.add(hex(cp))
+      if (meta.kind === "fragment") for (const cp of meta.checkpoints) checkpoints.add(cp)
     }
     const heads = [...new Set(records.map(meta => meta.head))]
       .filter(head => !referenced.has(head) && !checkpoints.has(head.slice(0, 24))).sort()
@@ -85,7 +92,7 @@ export async function writeRecords(
       if (record.kind === "commit") {
         commits.push(scope.own(new LooseCommit(id, head, ids(record.parents), blob)))
       } else {
-        const checkpoints = record.checkpoints.map(cp => scope.own(new Checkpoint(cp)))
+        const checkpoints = record.checkpoints.map(cp => scope.own(new Checkpoint(checkpointBytes(cp))))
         fragments.push(scope.own(new Fragment(id, head, ids(record.boundary), checkpoints, blob)))
       }
     }
@@ -123,7 +130,7 @@ export function withoutAncestors(records: SedimentreeMeta[], roots: string[]): S
     for (const meta of byHead.get(head) ?? []) {
       stack.push(...(meta.kind === "commit" ? meta.parents : meta.boundary))
       if (meta.kind === "fragment") {
-        for (const cp of meta.checkpoints) stack.push(...(byPrefix.get(hex(cp)) ?? []))
+        for (const cp of meta.checkpoints) stack.push(...(byPrefix.get(cp) ?? []))
       }
     }
   }

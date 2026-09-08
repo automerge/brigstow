@@ -9,7 +9,7 @@ const id = n => n.toString(16).padStart(2, "0").repeat(32)
 const commit = (n, parents = []) => ({ kind: "commit", head: id(n), parents: parents.map(id), bytes: new Uint8Array([n]) })
 const fragment = (n, boundary = [], checkpoints = []) => ({
   kind: "fragment", head: id(n), boundary: boundary.map(id),
-  checkpoints: checkpoints.map(n => new Uint8Array(12).fill(n)), bytes: new Uint8Array([n, 0]),
+  checkpoints: checkpoints.map(n => id(n).slice(0, 24)), bytes: new Uint8Array([n, 0]),
 })
 const metas = handle => Array.from(handle.metadata())
 const sortedHeads = handle => metas(handle).map(m => m.head).sort()
@@ -83,11 +83,11 @@ test("metadata and heads are defensive snapshots; materialize preserves kind and
 
   const snapshot = metas(handle)
   snapshot[0].head = id(99)
-  snapshot.find(m => m.kind === "fragment").checkpoints[0].fill(0)
+  snapshot.find(m => m.kind === "fragment").checkpoints[0] = "00".repeat(12)
   snapshot.find(m => m.kind === "commit").parents.push(id(99))
   handle.documentId.fill(0)
   handle.heads().push(id(99))
-  assert.equal(metas(handle).find(m => m.kind === "fragment").checkpoints[0][0], 3)
+  assert.equal(metas(handle).find(m => m.kind === "fragment").checkpoints[0], "03".repeat(12))
   assert.ok(!sortedHeads(handle).includes(id(99)))
   assert.deepEqual(handle.heads(), [id(2)])
   assert.deepEqual(handle.documentId, documentId)
@@ -209,12 +209,12 @@ test("apply snapshots caller buffers and listener failures do not break persiste
     const record = fragment(1, [], [2])
     const pending = handle.apply([record])
     record.bytes.fill(99)
-    record.checkpoints[0].fill(99)
+    record.checkpoints[0] = "63".repeat(12)
     await pending
     assert.ok(notified)
     assert.ok(errors.length > 0)
     assert.deepEqual(await handle.materialize(metas(handle)), [new Uint8Array([1, 0])])
-    assert.equal(metas(handle)[0].checkpoints[0][0], 2)
+    assert.equal(metas(handle)[0].checkpoints[0], "02".repeat(12))
   } finally {
     console.error = original
   }

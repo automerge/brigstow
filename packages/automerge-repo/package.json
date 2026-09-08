@@ -15,7 +15,7 @@
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "pnpm -w build && node --import tsx --test test/*.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -26,5 +26,9 @@
     "@brigstow/brigstow-subduction": "workspace:*",
     "bs58check": "^4.0.0",
     "uuid": "catalog:"
+  },
+  "devDependencies": {
+    "@automerge/subduction": "catalog:",
+    "tsx": "^4.23.13"
   }
 }

@@ -29,35 +29,53 @@ export function amDocType<T extends Record<string, unknown>>(): AutomergeDocType
         },
         sedimentree: {
             metadata: function(state: Automerge.next.Doc<T>, opts?: { notAncestorsOf?: string[] }): Iterable<SedimentreeMeta> {
-                const fragments = Automerge.getFragmentMetadata(state).map(f => ({
+                const fragments = Automerge.getFragmentMetadata(state).map<SedimentreeMeta>(f => ({
                     kind: "fragment",
                     boundary: f.boundary,
                     head: f.head,
                     checkpoints: f.checkpoints
                 }))
-                const commits = Automerge.getCommits(state).map(c => ({
+                const commits = Automerge.getCommits(state).map<SedimentreeMeta>(c => ({
                     kind: "commit",
                     head: c.head,
                     parents: c.parents 
                 }))
-                //export type SedimentreeMeta =
-                //| { kind: "commit"; head: string; parents: string[] }
-                //| {
-                //kind: "fragment"
-                //head: string
-                //boundary: string[]
-                //[>* 12-byte commit-ID prefixes, not full commit IDs. <]
-                //checkpoints: Uint8Array[]
-                //}
-
                 return [...fragments, ...commits]
             },
             materialize: function(state: Automerge.next.Doc<T>, metas: SedimentreeMeta[]): Promise<Uint8Array[]> | Uint8Array[] {
-                throw new Error("Function not implemented.")
+                const fragsByHead = new Map(Automerge.getFragments(state).map(f => [f.head, f]))
+                const result: Uint8Array[] = []
+                for (const meta of metas) {
+                    if (meta.kind === "fragment") {
+                        const frag = fragsByHead.get(meta.head)
+                        if (!frag) {
+                            throw new Error("unknown fragment")
+                        }
+                        result.push(frag.bytes)
+                    } else if (meta.kind === "commit") {
+                        // TODO: This doesn't actually export the original commit
+                        // we need to add Automerge.getChange really
+                        const commit = Automerge.saveBundle(state, [meta.head])
+                        result.push(commit)
+                    }
+                }
+                return Promise.resolve(result)
             },
             apply: function(state: Automerge.next.Doc<T>, records: SedimentreeRecord[]): Automerge.next.Doc<T> {
-                throw new Error("Function not implemented.")
+                const concatenated = concatBytes(records.map(r => r.bytes))
+                return Automerge.loadIncremental(state, concatenated)
             }
         }
     }
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+    const total = chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+        out.set(c, offset);
+        offset += c.length;
+    }
+    return out;
 }

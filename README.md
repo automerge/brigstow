@@ -35,10 +35,12 @@ The workspace overrides `@automerge/subduction` with the built package at
 `../subduction/subduction_wasm`. Build that sibling checkout before running
 `pnpm install`; its package exports use `dist/`, not the legacy `pkg-node/`.
 
-Fragment metadata uses `Uint8Array[]` checkpoints, each exactly 12 bytes (the
-prefix of a full commit ID). Heads and boundaries remain full hex-encoded IDs.
-Checkpoints returned by WASM can be cached using `cp.toBytes()` and passed back
-as Brigstow record metadata without reconstructing full commit IDs.
+Fragment metadata uses `string[]` checkpoints, each exactly 24 hex characters
+encoding a 12-byte commit-ID prefix, not a full commit ID. Heads and boundaries
+remain full hex-encoded IDs. The Subduction adapter accepts either hex case and
+returns lowercase hex, converting to bytes only at the WASM boundary. Metadata
+can be serialized as JSON and reused as Brigstow record metadata directly;
+checkpoints obtained from WASM directly can be converted with `cp.toHexString()`.
 
 ## Subduction handles
 

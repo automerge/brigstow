@@ -5,6 +5,11 @@ import wasm from "vite-plugin-wasm"
 
 export default defineConfig({
   plugins: [solid(), wasm()],
+  optimizeDeps: {
+    // Local WASM rebuilds can change exports without changing the package version.
+    // Keep both entry points out of Vite's long-lived prebundled dependency cache.
+    exclude: ["@automerge/subduction", "@automerge/subduction/slim"],
+  },
   resolve: {
     alias: [
       {
