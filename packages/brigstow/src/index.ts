@@ -26,13 +26,7 @@ export class Repo {
 
   query<D extends DocType<any, any, any, any>>(docType: D, docId: DocumentId): Query<DocHandle<D>> {
     const sourceQuery = this.source.find(docId)
-    const query = mapQueryAsync(sourceQuery, async sedimentreeHandle => {
-      const metas = Array.from(sedimentreeHandle.metadata())
-      const data = await sedimentreeHandle.materialize(metas)
-      const sedimentreeRecords: SedimentreeRecord[] = metas.map((meta, i) => ({ ...meta, bytes: data[i]! }))
-      const init = docType.sedimentree.apply(docType.empty(), sedimentreeRecords)
-      return new DocHandle(sedimentreeHandle, docType, init)
-    })
+    const query = mapQueryAsync(sourceQuery, sedimentreeHandle => DocHandle.load(sedimentreeHandle, docType))
     return new OwnedQuery(query, sourceQuery)
   }
 
@@ -60,7 +54,7 @@ export class Repo {
       documentType: docType.name,
       initialRecords
     })
-    return new DocHandle(sedimentreeHandle, docType, document)
+    return DocHandle.load(sedimentreeHandle, docType, document)
   }
 }
 

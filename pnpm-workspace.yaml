@@ -1,6 +1,8 @@
 packages:
   - packages/*
   - examples/*
+allowBuilds:
+  esbuild: false
 catalog:
   "@automerge/subduction": "^0.21.0"
   '@automerge/automerge': ^3.3.2

@@ -46,14 +46,16 @@ checkpoints obtained from WASM directly can be converted with `cp.toHexString()`
 
 `Repo.create()` persists the initial document before returning. `handle.change(fn)`
 updates the local view and emits `change` synchronously, then queues persistence.
-Its returned promise resolves after persistence/sync; use `await handle.change(fn)`
-or `await handle.flush()` before reopening the document elsewhere. Saves are
+With `SubductionSource`, its returned promise resolves after **local persistence**;
+use `await handle.change(fn)` or `await handle.flush()` before reopening from the
+same storage. Network sync runs separately and cannot delay an offline save. Saves are
 serialized and only missing records are exported. Failures are logged and reject
 these promises; local edits remain in memory, and a later change retries missing
 records. `flush()` waits for queued work; it does not itself retry a failed save.
 
 The todo demo displays save status and warns before leaving with pending or failed
-saves. Browser shutdown cannot be relied upon to finish asynchronous writes.
+local saves. Browser shutdown cannot be relied upon to finish asynchronous writes.
+A local save is not proof that a remote peer has received the document.
 
 ## Subduction handles
 
@@ -66,19 +68,54 @@ import { ObservableStorage, SubductionSource } from "@brigstow/brigstow-subducti
 
 const storage = new ObservableStorage(new MemoryStorage())
 const subduction = new Subduction({ signer: MemorySigner.generate(), storage })
-const source = new SubductionSource(subduction) // reopened documents use type "automerge"
+const source = new SubductionSource(subduction, "automerge", {
+  syncServers: ["wss://subduction.sync.inkandswitch.com"],
+  syncTimeoutMilliseconds: 5000,
+  retryIntervalMilliseconds: 5000,
+  onSyncError: error => console.warn("Peer sync unavailable", error),
+})
 ```
 
 The todo example instead opens `IndexedDbStorage` asynchronously with database
 name `brigstow-todo`, then wraps it in `ObservableStorage`. This requires the local
-Subduction build to include the `idb` Cargo feature.
+Subduction build to include the `idb` Cargo feature. It connects to the public
+server above by default; set `VITE_SUBDUCTION_SYNC_SERVER` to override the endpoint,
+or set it to an empty string for local-only use. These are public demo documents:
+do not enter sensitive information. Sharing the full demo URL (including its hash)
+lets another browser request the same document.
 
 All writers sharing a backend must share the wrapper; writes directly to the
 underlying backend (including from another tab/process) are not observed.
 `SubductionSource` rejects an unwrapped backend rather than returning stale handles.
 Pass a second constructor argument to configure the document type used on reopen;
-Subduction does not persist Brigstow's `documentType` field. Source lookup is local;
-the host is responsible for connecting peers and initiating document discovery/sync.
+Subduction does not persist Brigstow's `documentType` field.
+
+The third argument configures synchronization; libraries have no implicit server.
+Connections use Subduction's discovery handshake. Without `syncServers`, callers
+can supply connections themselves (e.g. `Subduction.link()` in tests).
+
+`create()` saves locally and schedules upload. `find()` returns a local copy
+immediately and synchronizes in the background; for an unknown document it asks
+peers and subscribes before returning a handle. A successful round with no document
+returns unavailable; connection/transport failures are not treated as proof that
+a remote document is absent. With no servers or connected peers, lookup retains
+local-only unavailable behavior.
+
+The source tracks requested/created documents for its lifetime, retries them every
+five seconds by default, reconnects missing server peers, and re-establishes
+subscriptions. Periodic rounds also catch up missed relayed updates; public-server
+updates may take a retry interval rather than arriving immediately. Unopened local
+documents are not automatically uploaded.
+
+Use `await source.sync()` to request a round for all tracked documents, or
+`source.sync(documentId)` for one. It rejects if no peer is reachable or every
+peer fails; partial failures go to `onSyncError`. `onSynced(documentId)` reports a
+round reaching at least one peer, not delivery to every replica. Live document
+refreshes can complete after the round. Call `await source.shutdown()` to stop
+retries and disconnect its Subduction instance; do not share that instance between
+independently managed sources. Disposing a query stops notifications, not a WASM
+sync already in flight; native sync deadlines bound that work. Connection wait
+timeouts do not cancel handshakes either: late connections are closed after shutdown.
 
 Handles load an initial metadata snapshot before becoming available. Subsequent
 storage mutations, including batches and deletions, trigger coalesced reloads.
@@ -90,9 +127,15 @@ reload. Listener exceptions are logged without failing persistence or other list
 Storage watchers use weak references, so handles require no separate disposal.
 
 `materialize()` loads blobs by `(kind, head)` in the supplied order, rejecting
-missing records. `apply()` merges a batch through Subduction, awaits its bounded
-sync round, then waits for the updated snapshot. Failed writes/syncs may still have
-persisted data; per-peer transport failures do not undo local persistence.
+missing records. On source-managed handles, `apply()` persists the batch, waits
+for the updated local snapshot, and schedules background sync. Standalone handles
+opened directly with `SubductionSedimentreeHandle.open()` retain store-and-sync
+behavior. Failed writes may still have persisted part of a batch.
+
+Core Brigstow subscribes to the sedimentree handle before initial loading. Incoming
+records merge into the current CRDT state, preserving concurrent local edits, and
+emit document changes only when logical heads change. Incoming data is already
+persisted by Subduction; applying it to the document does not write an echo.
 
 The current implementation reloads metadata from storage rather than duplicating
 Subduction's minimization logic. It can expose redundant persisted records and

@@ -1,34 +1,56 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { DocHandle } from "../dist/DocHandle.js"
+import { Repo } from "../dist/index.js"
+
+const tick = () => new Promise(resolve => setImmediate(resolve))
 
 function deferred() {
-  let resolve
-  const promise = new Promise(r => { resolve = r })
-  return { promise, resolve }
+  let resolve, reject
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
 }
 
-function setup() {
-  const meta = n => ({ kind: "commit", head: String(n), parents: n ? [String(n - 1)] : [] })
+function setup(createHandle = true) {
+  // A grow-only set CRDT: each independent value is a graph head.
+  const meta = n => ({ kind: "commit", head: String(n), parents: [] })
   const persisted = new Map([["0", meta(0)]])
   const batches = []
+  const listeners = new Set()
+  const emit = () => { for (const listener of listeners) listener() }
+  const receive = (...values) => {
+    for (const value of values) persisted.set(String(value), meta(value))
+    emit()
+  }
   const source = {
+    documentId: new Uint8Array(16),
+    documentType: "set",
+    heads: () => [...persisted.keys()],
     metadata: () => persisted.values(),
+    async materialize(metas) { return metas.map(meta => new Uint8Array([Number(meta.head)])) },
+    on(event, listener) { assert.equal(event, "change"); listeners.add(listener) },
+    off(event, listener) { assert.equal(event, "change"); listeners.delete(listener) },
     async apply(records) {
       batches.push(records.map(record => Number(record.head)))
       for (const record of records) persisted.set(record.head, record)
+      emit()
     },
   }
   const adapter = {
     metadata: state => state.map(meta),
     materialize: (_state, metas) => metas.map(meta => new Uint8Array([Number(meta.head)])),
+    apply: (state, records) => [...new Set([...state, ...records.map(record => record.bytes[0])])].sort((a, b) => a - b),
   }
   const docType = {
+    name: "set",
+    empty: () => [],
+    init: state => state,
     view: state => state,
+    heads: state => state.map(String),
     change: (state, n) => [...state, n],
     sedimentree: adapter,
   }
-  return { handle: new DocHandle(source, docType, [0]), source, adapter, batches, persisted }
+  return { handle: createHandle ? new DocHandle(source, docType, [0]) : undefined, source, docType, adapter, batches, persisted, receive, emit, listeners }
 }
 
 test("change updates synchronously, serializes saves, and flush waits for queued edits", async t => {
@@ -88,3 +110,221 @@ for (const stage of ["materialize", "apply"]) {
     assert.deepEqual([...persisted.keys()], ["0", "1", "2"])
   })
 }
+
+test("incoming records notify once without saving an echo; own writes and reordered heads are silent", async t => {
+  const { handle, source, receive, emit, batches } = setup()
+  const notifications = []
+  handle.on("change", ({ handle: changed, doc }) => {
+    assert.equal(changed, handle)
+    notifications.push(doc)
+  })
+  receive(1)
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1])
+  assert.deepEqual(handle.heads(), ["0", "1"], "use DocType.heads, not a state method")
+  assert.deepEqual(notifications, [[0, 1]])
+  assert.deepEqual(batches, [])
+
+  await handle.change(2)
+  await tick()
+  assert.deepEqual(notifications, [[0, 1], [0, 1, 2]])
+  assert.deepEqual(batches, [[2]])
+  const materialize = t.mock.method(source, "materialize")
+  t.mock.method(source, "heads", () => ["2", "1", "0"])
+  emit()
+  emit()
+  await tick()
+  assert.equal(materialize.mock.callCount(), 0)
+  assert.equal(notifications.length, 2)
+})
+
+test("a delayed incoming read merges into current local state, including unsaved edits", async t => {
+  const { handle, source, receive, batches } = setup()
+  const entered = deferred(), readRelease = deferred(), saveRelease = deferred()
+  const materialize = source.materialize.bind(source)
+  t.mock.method(source, "materialize", async metas => {
+    entered.resolve()
+    await readRelease.promise
+    return materialize(metas)
+  })
+  const apply = source.apply.bind(source)
+  t.mock.method(source, "apply", async records => {
+    await saveRelease.promise
+    await apply(records)
+  })
+  const notifications = []
+  handle.on("change", ({ doc }) => notifications.push(doc))
+  receive(1)
+  await entered.promise
+  const saved = handle.change(2)
+  assert.deepEqual(handle.doc(), [0, 2])
+  readRelease.resolve()
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1, 2], "must not replace the state captured before IO")
+  assert.deepEqual(batches, [], "local persistence is still blocked")
+  saveRelease.resolve()
+  await saved
+  await tick()
+  assert.deepEqual(notifications, [[0, 2], [0, 1, 2]])
+  assert.deepEqual(batches, [[2]], "incoming record must not be echoed")
+})
+
+test("reapplying an older source snapshot does not notify for unchanged logical heads", async t => {
+  const { handle, source, emit } = setup()
+  const release = deferred()
+  const apply = source.apply.bind(source)
+  t.mock.method(source, "apply", async records => {
+    await release.promise
+    await apply(records)
+  })
+  const notifications = []
+  handle.on("change", ({ doc }) => notifications.push(doc))
+  const saved = handle.change(1)
+  const materialize = t.mock.method(source, "materialize")
+  emit()
+  await tick()
+  assert.equal(materialize.mock.callCount(), 1, "source heads differ from the unsaved local heads")
+  assert.deepEqual(handle.doc(), [0, 1])
+  assert.deepEqual(notifications, [[0, 1]], "a new state object with identical heads is not a change")
+  release.resolve()
+  await saved
+  await tick()
+  assert.equal(notifications.length, 1)
+})
+
+test("refreshes serialize and coalesce events, including events during a read", async t => {
+  const { handle, source, receive, emit } = setup()
+  const entered = deferred(), release = deferred()
+  const materialize = source.materialize.bind(source)
+  let calls = 0, active = 0, maxActive = 0
+  t.mock.method(source, "materialize", async metas => {
+    maxActive = Math.max(maxActive, ++active)
+    if (++calls === 1) {
+      entered.resolve()
+      await release.promise
+    }
+    const result = await materialize(metas)
+    active--
+    return result
+  })
+  receive(1)
+  emit()
+  await entered.promise
+  receive(2)
+  receive(3)
+  emit()
+  assert.equal(calls, 1)
+  release.resolve()
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1, 2, 3])
+  assert.equal(calls, 2, "one follow-up read should cover all intervening events")
+  assert.equal(maxActive, 1)
+})
+
+for (const stage of ["metadata", "materialize", "apply"]) {
+  test(`incoming ${stage} failure is logged and a later event recovers`, async t => {
+    const { handle, source, adapter, receive, emit } = setup()
+    const logs = t.mock.method(console, "error", () => {})
+    const target = stage === "apply" ? adapter : source
+    const original = target[stage].bind(target)
+    const error = new Error("incoming unavailable")
+    let fail = true
+    t.mock.method(target, stage, (...args) => {
+      if (fail) {
+        if (stage === "materialize") return Promise.reject(error)
+        throw error
+      }
+      return original(...args)
+    })
+    receive(1)
+    await tick()
+    assert.deepEqual(handle.doc(), [0])
+    assert.equal(logs.mock.callCount(), 1)
+    assert.equal(logs.mock.calls[0].arguments[1], error)
+    fail = false
+    emit()
+    await tick()
+    assert.deepEqual(handle.doc(), [0, 1])
+  })
+}
+
+test("an event during failed IO is not lost", async t => {
+  const { handle, source, receive } = setup()
+  const logs = t.mock.method(console, "error", () => {})
+  const entered = deferred(), release = deferred()
+  const materialize = source.materialize.bind(source)
+  let calls = 0
+  t.mock.method(source, "materialize", async metas => {
+    if (++calls === 1) {
+      entered.resolve()
+      await release.promise
+    }
+    return materialize(metas)
+  })
+  receive(1)
+  await entered.promise
+  receive(2)
+  release.reject(new Error("temporary read failure"))
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1, 2])
+  assert.equal(calls, 2)
+  assert.equal(logs.mock.callCount(), 1)
+})
+
+test("Repo.find subscribes before initial loading and catches arrivals during loading", async t => {
+  const { source, docType, receive, listeners } = setup(false)
+  const entered = deferred(), release = deferred()
+  const metadata = source.metadata.bind(source)
+  t.mock.method(source, "metadata", (...args) => {
+    assert.equal(listeners.size, 1, "subscribe before reading the snapshot")
+    return metadata(...args)
+  })
+  const materialize = source.materialize.bind(source)
+  let calls = 0
+  t.mock.method(source, "materialize", async metas => {
+    if (++calls === 1) {
+      entered.resolve()
+      await release.promise
+    }
+    return materialize(metas)
+  })
+  let disposed = false
+  const repo = new Repo({ find: () => ({
+    id: () => source.documentId,
+    state: () => ({ type: "ready", handle: source }),
+    subscribe: () => () => {},
+    dispose: () => { disposed = true },
+  }) })
+  const finding = repo.find(docType, source.documentId)
+  await entered.promise
+  receive(1)
+  release.resolve()
+  const handle = await finding
+  assert.deepEqual(handle.doc(), [0, 1])
+  assert.equal(disposed, true)
+  receive(2)
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1, 2], "disposing the query must not stop the returned handle")
+})
+
+test("Repo.create catches source changes before its handle is constructed", async () => {
+  const { source, docType, receive } = setup(false)
+  const repo = new Repo({ async create() {
+    receive(1)
+    return source
+  } })
+  const handle = await repo.create(docType, [0])
+  assert.deepEqual(handle.doc(), [0, 1])
+  receive(2)
+  await tick()
+  assert.deepEqual(handle.doc(), [0, 1, 2])
+})
+
+test("initial load failures reject rather than returning an empty ready handle", async t => {
+  const { source, docType } = setup(false)
+  const logs = t.mock.method(console, "error", () => {})
+  const error = new Error("initial read failed")
+  t.mock.method(source, "materialize", async () => { throw error })
+  await assert.rejects(DocHandle.load(source, docType), reason => reason === error)
+  assert.equal(logs.mock.callCount(), 1)
+})

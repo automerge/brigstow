@@ -23,19 +23,20 @@ export class SubductionSedimentreeHandle implements SedimentreeHandle {
     private storage: ObservableStorage,
     documentId: DocumentId,
     readonly documentType: string,
+    private onPersisted?: () => void,
   ) {
     this.#documentId = documentId.slice() as DocumentId
     const id = SedimentreeId.fromBytes(documentId)
     try { storage.watch(id.toString(), this.#invalidate) } finally { id.free() }
   }
 
-  static async open(sdn: Subduction, documentId: DocumentId, documentType: string): Promise<SubductionSedimentreeHandle> {
+  static async open(sdn: Subduction, documentId: DocumentId, documentType: string, onPersisted?: () => void): Promise<SubductionSedimentreeHandle> {
     if (!(sdn.storage instanceof ObservableStorage)) {
       throw new Error("Construct Subduction with an ObservableStorage to use SubductionSource")
     }
     // Install the watcher before loading. Any concurrent mutation invalidates
     // that load, preventing an older snapshot from replacing newer metadata.
-    const handle = new SubductionSedimentreeHandle(sdn, sdn.storage, documentId, documentType)
+    const handle = new SubductionSedimentreeHandle(sdn, sdn.storage, documentId, documentType, onPersisted)
     await handle.#refresh()
     return handle
   }
@@ -80,20 +81,21 @@ export class SubductionSedimentreeHandle implements SedimentreeHandle {
   }
 
   /**
-   * Persist and sync a batch through Subduction. This awaits the sync round
-   * (bounded by Subduction's configured timeout); per-peer transport failures
-   * do not undo local persistence. Storage observations also cover remote writes.
+   * Source-managed handles persist locally and schedule background sync, so
+   * offline peers cannot delay or fail a local save. Standalone handles retain
+   * the store-and-sync behavior. Storage observations also cover remote writes.
    */
   async apply(records: SedimentreeRecord[]): Promise<void> {
     if (!records.length) return
     try {
-      await writeRecords(this.sdn, this.#documentId, records, true)
+      await writeRecords(this.sdn, this.#documentId, records, !this.onPersisted)
     } catch (error) {
       // A failed write/sync can still have persisted part or all of the batch.
       await this.#refresh().catch(() => {})
       throw error
     }
     await this.#refresh()
+    this.onPersisted?.()
   }
 
   on(event: "change", listener: () => void): void { this.#listeners.add(listener) }

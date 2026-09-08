@@ -3,32 +3,71 @@ import type { DocumentId, SedimentreeSource, SedimentreeCreateRequest, Sedimentr
 import { SubductionSedimentreeHandle } from "./SubductionSedimentreeHandle.js"
 import { ObservableStorage } from "./ObservableStorage.js"
 import { writeRecords } from "./records.js"
+import { DocumentSync, NoSyncPeersError, type SubductionSourceOptions } from "./DocumentSync.js"
 
 export { ObservableStorage } from "./ObservableStorage.js"
 export { SubductionSedimentreeHandle } from "./SubductionSedimentreeHandle.js"
+export { NoSyncPeersError, type SubductionSourceOptions } from "./DocumentSync.js"
 
 export class SubductionSource implements SedimentreeSource {
+  #sync: DocumentSync
+  #hasServers: boolean
+  #closed = false
+
   /** Subduction does not persist document types; this type is used when reopening. */
-  constructor(private subduction: Subduction, private documentType = "automerge") {
+  constructor(private subduction: Subduction, private documentType = "automerge", options: SubductionSourceOptions = {}) {
     if (!(subduction.storage instanceof ObservableStorage)) {
       throw new Error("Construct Subduction with an ObservableStorage to use SubductionSource")
     }
+    this.#sync = new DocumentSync(subduction, options)
+    this.#hasServers = !!options.syncServers?.length
   }
 
-  /** Find locally persisted data. The host establishes peer synchronization separately. */
+  /** Local-first lookup; fetch and subscribe via peers if the local copy is absent. */
   find(id: DocumentId): Query<SedimentreeHandle> {
-    return new PromiseQuery(id, this.#findHandle(id))
+    if (this.#closed) throw new Error("SubductionSource is shut down")
+    const documentId = id.slice() as DocumentId
+    return new PromiseQuery(documentId, this.#findHandle(documentId))
   }
 
   async create(request: SedimentreeCreateRequest): Promise<SedimentreeHandle> {
+    if (this.#closed) throw new Error("SubductionSource is shut down")
     const documentId = (request.documentId?.slice() ?? crypto.getRandomValues(new Uint8Array(32))) as DocumentId
     await writeRecords(this.subduction, documentId, request.initialRecords, false)
-    return SubductionSedimentreeHandle.open(this.subduction, documentId, request.documentType)
+    const handle = await this.#open(documentId, request.documentType)
+    this.#sync.schedule(documentId)
+    return handle
+  }
+
+  /** Explicitly synchronize one document, or all documents opened/created by this source. */
+  sync(id?: DocumentId): Promise<void> { return this.#sync.sync(id) }
+
+  /** Stop retries and disconnect this source's Subduction instance. */
+  shutdown(): Promise<void> {
+    this.#closed = true
+    return this.#sync.shutdown()
+  }
+
+  #open(id: DocumentId, documentType = this.documentType): Promise<SubductionSedimentreeHandle> {
+    return SubductionSedimentreeHandle.open(this.subduction, id, documentType, () => this.#sync.schedule(id))
   }
 
   async #findHandle(id: DocumentId): Promise<SedimentreeHandle | null> {
-    const handle = await SubductionSedimentreeHandle.open(this.subduction, id, this.documentType)
-    return handle.exists ? handle : null
+    const local = await this.#open(id)
+    if (local.exists) {
+      this.#sync.schedule(id)
+      return local
+    }
+    try {
+      await this.#sync.sync(id)
+    } catch (error) {
+      // Preserve local-only sources' unavailable behavior. Connection/transport
+      // errors remain failures, not evidence that the document doesn't exist.
+      if (error instanceof NoSyncPeersError && !this.#hasServers) return null
+      throw error
+    }
+    const fetched = await this.#open(id)
+    return fetched.exists ? fetched : null
   }
 }
 
@@ -36,6 +75,7 @@ class PromiseQuery<F> implements Query<F> {
   private listeners: Set<((state: QueryState<F>) => void)> = new Set()
   private value: F | null | undefined
   private error: Error | undefined
+  private disposed = false
 
   constructor(private docId: DocumentId, private promise: Promise<F | null>) {
     this.promise
@@ -43,7 +83,7 @@ class PromiseQuery<F> implements Query<F> {
         this.value = value
       })
       .catch(error => {
-        this.error = error
+        this.error = error instanceof Error ? error : new Error(String(error))
       })
       .finally(() => {
         this.#onchange()
@@ -51,7 +91,7 @@ class PromiseQuery<F> implements Query<F> {
   }
 
   id(): DocumentId {
-    return this.docId
+    return this.docId.slice() as DocumentId
   }
 
   state(): QueryState<F> {
@@ -67,16 +107,25 @@ class PromiseQuery<F> implements Query<F> {
   }
 
   subscribe(callback: (state: QueryState<F>) => void): () => void {
+    if (this.disposed) throw new Error("Query is disposed")
     this.listeners.add(callback)
     return () => {
       this.listeners.delete(callback)
     }
   }
 
+  dispose(): void {
+    this.disposed = true
+    this.listeners.clear()
+    // WASM sync calls cannot be aborted by dropping a Promise. Their configured
+    // deadline bounds the work; disposing a query stops its notifications.
+  }
+
   #onchange = () => {
+    if (this.disposed) return
     const state = this.state()
     for (const listener of [...this.listeners]) {
-      listener(state)
+      try { listener(state) } catch (error) { console.error("Subduction query listener failed", error) }
     }
   }
 }

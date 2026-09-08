@@ -20,6 +20,8 @@ type TodoHandle = DocHandle<TodoDocument>
 
 export default function App() {
   let handle: TodoHandle | undefined
+  let source: SubductionSource | undefined
+  let disposed = false
   let input: HTMLInputElement | undefined
   let removeHandleListener: (() => void) | undefined
 
@@ -27,6 +29,7 @@ export default function App() {
   const [failure, setFailure] = createSignal<string>()
   const [pendingSaves, setPendingSaves] = createSignal(0)
   const [saveFailure, setSaveFailure] = createSignal<string>()
+  const [syncFailure, setSyncFailure] = createSignal<string>()
   const [activeFilter, setActiveFilter] = createSignal<Filter>("all")
   const [documentRevision, setDocumentRevision] = createSignal(0)
 
@@ -59,8 +62,10 @@ export default function App() {
   })
 
   onCleanup(() => {
+    disposed = true
     removeHandleListener?.()
     window.removeEventListener("beforeunload", warnUnsavedChanges)
+    void source?.shutdown().catch(error => console.error("Unable to stop synchronization", error))
   })
 
   function warnUnsavedChanges(event: BeforeUnloadEvent) {
@@ -84,17 +89,28 @@ export default function App() {
   }
 
   async function start() {
+    setPhase("loading")
     try {
-      const backend = await IndexedDbStorage.setup(window.indexedDB, "brigstow-todo")
-      const subduction = new Subduction({
-        signer: MemorySigner.generate(),
-        storage: new ObservableStorage(backend),
-      })
-      const repo = new Repo(new SubductionSource(subduction))
+      if (!source) {
+        const backend = await IndexedDbStorage.setup(window.indexedDB, "brigstow-todo")
+        const subduction = new Subduction({
+          signer: MemorySigner.generate(),
+          storage: new ObservableStorage(backend),
+        })
+        const server = import.meta.env.VITE_SUBDUCTION_SYNC_SERVER ?? "wss://subduction.sync.inkandswitch.com"
+        source = new SubductionSource(subduction, "automerge", {
+          syncServers: server ? [server] : [],
+          onSyncError: error => setSyncFailure(errorMessage(error)),
+          onSynced: () => setSyncFailure(undefined),
+        })
+      }
+      if (disposed) { await source.shutdown(); return }
+      const repo = new Repo(source)
       const existingDocumentId = documentIdFromHash(window.location.hash)
       const resolvedHandle = existingDocumentId
         ? await repo.find<TodoDocument>("automerge:" + existingDocumentId as AutomergeUrl)
         : await repo.create<TodoDocument>({ todos: [] })
+      if (disposed) return
       const onChange = () => setDocumentRevision(revision => revision + 1)
 
       handle = resolvedHandle
@@ -251,10 +267,20 @@ export default function App() {
         <p class="app-footer" role="status" aria-live="polite">
           {saveFailure()
             ? `Could not save changes: ${saveFailure()}`
-            : pendingSaves() > 0 ? "Saving…" : "All changes saved"}
+            : pendingSaves() > 0 ? "Saving…" : "All changes saved locally"}
         </p>
       </Show>
 
+      <Show when={syncFailure()}>
+        <p class="app-footer" role="status">Peer sync unavailable: {syncFailure()}. Retrying in the background.</p>
+      </Show>
+      <Show when={phase() === "error"}>
+        <button type="button" onClick={() => void start()}>Retry opening document</button>
+      </Show>
+
+      <p class="app-footer">
+        Demo documents are shared via a public sync server. Do not enter sensitive data.
+      </p>
       <p class="app-footer">
         Built with SolidJS and <code>@brigstow/automerge-repo</code>.
       </p>
