@@ -701,3 +701,36 @@ test("detachment removes the old row before unsubscribe can re-register and thro
   assert.deepEqual(errors, [])
   assert.equal(logs.mock.callCount(), 1)
 })
+
+for (const emptyPath of ["heads", "metadata"]) {
+  test(`empty ${emptyPath} snapshot skips application but retains the completion boundary`, options, async t => {
+    const { scheduler, errors } = setup(t)
+    const f = fakeSource(emptyPath === "heads" ? [] : [1]), handle = fakeHandle()
+    const original = f.source[emptyPath].bind(f.source)
+    let initial = true
+    t.mock.method(f.source, emptyPath, (...args) => {
+      const snapshot = original(...args)
+      if (initial) {
+        initial = false
+        // This notification must run before completion settles initial loading,
+        // even though the first pass has no materialization/application to await.
+        queueMicrotask(() => f.receive(2))
+        if (emptyPath === "metadata") return []
+      }
+      return snapshot
+    })
+    const followUp = f.blockNextRead()
+    const loading = scheduler.schedule(handle, f.source)
+    const state = observe(loading)
+    await followUp.entered.promise
+    await tick()
+    assert.equal(state.status, "pending")
+    assert.deepEqual(handle.applied, [], "an empty pass must not call applyRecords")
+    followUp.release.resolve()
+    await loading
+    assert.deepEqual(contents(handle), emptyPath === "heads" ? [2] : [1, 2])
+    assert.equal(f.reads.length, 1)
+    assert.equal(handle.applied.length, 1)
+    assert.deepEqual(errors, [])
+  })
+}

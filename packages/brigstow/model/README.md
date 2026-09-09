@@ -86,34 +86,52 @@ registration lifetime and asynchronous-work lifetime.
 
 | Model action | Implementation |
 | --- | --- |
-| `Schedule` | `schedule()` creates a row and subscribes before dispatching `requested` |
-| `Receive` / `Notify` | `requested` event; queues idle work or marks an outstanding pass dirty |
-| `Start` | `start` event in a microtask; the `read` effect captures missing metadata |
-| `Complete` | `loaded` produces an `apply` effect; its outcome becomes a `completed` event |
-| `Continue` | `continue` event: another read, or resolve initial loading and become idle |
-| `Unschedule` | `removed` event followed by rejection/detachment effects; also abstracts collection |
+| `Schedule` | `schedule()` creates a row and subscribes before updating it with `onRequested` |
+| `Receive` / `Notify` | `onRequested` queues idle work or marks an outstanding pass dirty |
+| `Start` | `onStart` runs in a microtask; the `read` effect captures missing metadata |
+| `Complete` | The IO adapter loads/applies records, then queues an update with `onCompleted` |
+| `Continue` | `onContinue` starts another read, or resolves initial loading and becomes idle |
+| `Unschedule` | `onRemoved` records rejection/detachment effects; also abstracts collection |
 | `Dispose` | Scheduler `dispose()`; sources and local edits remain operational |
 | `LocalEdit` | A document edit, independently of refresh IO |
 
-The TypeScript transitions live in
-[`RefreshSchedulerState.ts`](../src/RefreshSchedulerState.ts).
-`transition(row, event)` mutates one row and returns effects, without invoking
-external code. [`RefreshScheduler.ts`](../src/RefreshScheduler.ts) owns the active
-rows and executes those effects. An async completion retains its original row;
-removal invalidates that row before detaching it, and re-registration creates a
-fresh object.
+The TypeScript state types and transition functions live alongside the scheduler
+in [`RefreshScheduler.ts`](../src/RefreshScheduler.ts).
+Each is an ordinary function taking `(row, effects, ...args)`; there is no event
+union or dispatcher switch. [`RefreshScheduler.ts`](../src/RefreshScheduler.ts)
+invokes them through a buffered update boundary, for example:
+
+```ts
+this.#update(row, onRequested)
+this.#update(row, onCompleted, outcome)
+this.#update(row, onRemoved, reason, "aborted")
+```
+
+`#update` constructs a `RefreshEffects` interface that directly records closures.
+It invokes the state function, then runs those closures synchronously in order.
+Calls such as `effects.report(error)` and `effects.continue()` do not execute
+external code during the state update. There is no forwarding adapter, additional
+microtask, or global event queue. Callbacks during effect execution may cause
+subsequent updates with their own buffers, but cannot interrupt the original
+function's state changes.
+
+An async completion retains its original row; removal invalidates that row before
+detaching it, and re-registration creates a fresh object. The runtime effects are
+bound to that particular row, not looked up through the handle's current registration.
 
 The runtime row uses `initial` for the model's `result`, and `work.phase` for
 `phase`. It derives `running` from the phase rather than storing another boolean.
 An active `queued` row is implicitly dirty; `reading` and `after` have an explicit
 dirty flag. The stable initial promise is separate from its settlement status.
 
-The model's `Complete` action is split in TypeScript to handle callbacks safely:
-loading produces an apply effect, which can notify, remove the row, or throw.
-The row remains `reading` through application and until its queued `completed`
-event. This preserves the original drain's await boundary, including for empty
-snapshots and synchronous errors. `completed` enters `after`, handles failure,
-and emits a `continue` effect. That effect reads the row again *after* error or
+The model's `Complete` action is split in TypeScript to handle callbacks safely.
+The IO adapter uses a promise callback to apply materialized records, skipping
+empty snapshots and obsolete rows. Application may notify, remove the row, or
+throw; there is no separate `loaded` transition or `apply` effect. The row remains
+`reading` until the adapter queues an update with `onCompleted`. This preserves
+the original drain's completion boundary, including for empty snapshots and
+synchronous errors, without an async/await drain loop. `onCompleted` enters
+`after`, handles failure, and records a `continue` effect. That effect reads the row again *after* error or
 detachment callbacks have run; it does not add another microtask. Thus the model's
 `after` phase is a synchronous effect boundary in the implementation, not an
 additional asynchronous wait. These are correspondence notes, not a refinement
