@@ -1,7 +1,8 @@
 import type { DocHandleEvents } from "./DocHandleEvents.js"
 import type { DocChange, DocState, DocType, DocView } from "./DocType.js"
 import { type StringDocumentId, stringifyDocId } from "./DocumentId.js"
-import { sedimentreeRecordKey, type SedimentreeHandle } from "./SedimentreeSource.js"
+import { sedimentreeRecordKey, type SedimentreeHandle, type SedimentreeRecord } from "./SedimentreeSource.js"
+import { sameHeads } from "./helpers/sameHeads.js"
 
 export class DocHandle<D extends DocType<any, any, any, any>> {
   readonly #doctype: D
@@ -9,8 +10,6 @@ export class DocHandle<D extends DocType<any, any, any, any>> {
   #sedimentreeHandle: SedimentreeHandle
   #changeListeners: Set<DocHandleEvents<D>["change"]> = new Set()
   #pendingSave: Promise<void> = Promise.resolve()
-  #pendingRefresh: Promise<void> | undefined
-  #refreshRequested = false
 
   get documentId(): StringDocumentId {
     return stringifyDocId(this.#sedimentreeHandle.documentId)
@@ -21,63 +20,14 @@ export class DocHandle<D extends DocType<any, any, any, any>> {
     this.#doctype = doctype
     this.#document = document
     this.#sedimentreeHandle = sedimentreeHandle
-    DocHandle.#subscribe(sedimentreeHandle, new WeakRef(this))
   }
 
-  /** @hidden Subscribe before reading the initial source snapshot. */
-  static async load<D extends DocType<any, any, any, any>>(
-    source: SedimentreeHandle, doctype: D, document: DocState<D> = doctype.empty(),
-  ): Promise<DocHandle<D>> {
-    const handle = new DocHandle(source, doctype, document)
-    await handle.#requestRefresh()
-    return handle
-  }
-
-  // Keep the listener's closure separate from the constructor: the source must
-  // not retain the document (or its application listeners) after it is dropped.
-  static #subscribe<D extends DocType<any, any, any, any>>(
-    source: SedimentreeHandle, reference: WeakRef<DocHandle<D>>,
-  ): void {
-    source.on("change", function listener() {
-      const handle = reference.deref()
-      if (handle) void handle.#requestRefresh()
-      else source.off("change", listener)
-    })
-  }
-
-  #requestRefresh(): Promise<void> {
-    this.#refreshRequested = true
-    if (!this.#pendingRefresh) {
-      const refreshed = Promise.resolve().then(async () => {
-        while (this.#refreshRequested) {
-          this.#refreshRequested = false
-          await this.#refresh()
-        }
-      }).finally(() => {
-        this.#pendingRefresh = undefined
-        // An event arriving during failed IO still deserves another attempt.
-        if (this.#refreshRequested) void this.#requestRefresh()
-      })
-      this.#pendingRefresh = refreshed
-      void refreshed.catch(error => console.error("Document refresh failed", error))
-    }
-    return this.#pendingRefresh
-  }
-
-  async #refresh(): Promise<void> {
-    const heads = this.#doctype.heads(this.#document)
-    if (sameHeads(heads, this.#sedimentreeHandle.heads())) return
-    const metas = Array.from(this.#sedimentreeHandle.metadata({ notAncestorsOf: heads }))
-    if (!metas.length) return
-    const data = await this.#sedimentreeHandle.materialize(metas)
-    // Local changes may have happened during materialization. Merge into the
-    // CURRENT state, never the snapshot used to request the records.
+  /** @internal Merge scheduler-loaded records into the current state, without saving an echo. */
+  applyRecords(records: SedimentreeRecord[]): void {
+    // Local edits may have happened while the scheduler was materializing bytes.
     const before = [...this.#doctype.heads(this.#document)]
-    this.#document = this.#doctype.sedimentree.apply(
-      this.#document, metas.map((meta, i) => ({ ...meta, bytes: data[i]! })),
-    )
+    this.#document = this.#doctype.sedimentree.apply(this.#document, records)
     if (!sameHeads(before, this.#doctype.heads(this.#document))) this.#emitChange()
-    // Incoming records are already stored by the source; do not save an echo.
   }
 
   #emitChange(): void {
@@ -151,9 +101,4 @@ export class DocHandle<D extends DocType<any, any, any, any>> {
       this.#changeListeners.delete(fn as DocHandleEvents<D>["change"])
     }
   }
-}
-
-function sameHeads(left: string[], right: string[]): boolean {
-  const sorted = [...right].sort()
-  return left.length === right.length && [...left].sort().every((head, i) => head === sorted[i])
 }

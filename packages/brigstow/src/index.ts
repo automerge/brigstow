@@ -1,5 +1,6 @@
 import { DocHandle } from "./DocHandle.js";
-import type { DocInit, DocState, DocType } from "./DocType.js";
+import type { DocInit, DocType } from "./DocType.js";
+import { RefreshScheduler } from "./RefreshScheduler.js";
 import { stringifyDocId, type DocumentId } from "./DocumentId.js";
 import { type Query, type QueryState, mapQueryAsync } from "./query.js";
 import type { SedimentreeRecord, SedimentreeSource } from "./SedimentreeSource.js";
@@ -22,12 +23,39 @@ export class DocumentUnavailableError extends Error {
 
 export class Repo {
   constructor(private source: SedimentreeSource) { }
-  #handles: Set<DocHandle<any>> = new Set()
+  #disposed = false
+  #refreshScheduler = new RefreshScheduler({
+    onError: error => console.error("Document refresh failed", error),
+  })
 
   query<D extends DocType<any, any, any, any>>(docType: D, docId: DocumentId): Query<DocHandle<D>> {
+    this.#checkOpen()
     const sourceQuery = this.source.find(docId)
-    const query = mapQueryAsync(sourceQuery, sedimentreeHandle => DocHandle.load(sedimentreeHandle, docType))
-    return new OwnedQuery(query, sourceQuery)
+    const loading = new Set<DocHandle<D>>()
+    const query = mapQueryAsync(sourceQuery, async sedimentreeHandle => {
+      const handle = new DocHandle(sedimentreeHandle, docType, docType.empty())
+      loading.add(handle)
+      try {
+        await this.#refreshScheduler.schedule(handle, sedimentreeHandle)
+        return handle
+      } finally { loading.delete(handle) }
+    })
+    return new OwnedQuery(query, sourceQuery, () => {
+      // Disposing a find/query cancels unfinished loading, not the subscriptions
+      // of ready handles which have already been handed to the application.
+      for (const handle of loading) this.#refreshScheduler.unschedule(handle)
+      loading.clear()
+    })
+  }
+
+  /** Stop document refreshes. The externally supplied source retains its own lifecycle. */
+  dispose(): void {
+    this.#disposed = true
+    this.#refreshScheduler.dispose()
+  }
+
+  #checkOpen(): void {
+    if (this.#disposed) throw new Error("Repo is disposed")
   }
 
   async find<D extends DocType<any, any, any, any>>(
@@ -46,6 +74,7 @@ export class Repo {
   }
 
   async create<D extends DocType<any, any, any, any>>(docType: D, value: DocInit<D>): Promise<DocHandle<D>> {
+    this.#checkOpen()
     const document = docType.init(value)
     const metas = Array.from(docType.sedimentree.metadata(document))
     const data = await docType.sedimentree.materialize(document, metas)
@@ -54,7 +83,9 @@ export class Repo {
       documentType: docType.name,
       initialRecords
     })
-    return DocHandle.load(sedimentreeHandle, docType, document)
+    const handle = new DocHandle(sedimentreeHandle, docType, document)
+    await this.#refreshScheduler.schedule(handle, sedimentreeHandle)
+    return handle
   }
 }
 
@@ -68,6 +99,7 @@ class OwnedQuery<D> implements Query<D> {
   constructor(
     private query: Query<D>,
     private ownedQuery: Query<unknown>,
+    private onDispose: () => void,
   ) { }
 
   id(): DocumentId {
@@ -89,7 +121,8 @@ class OwnedQuery<D> implements Query<D> {
     try {
       this.query.dispose?.()
     } finally {
-      this.ownedQuery.dispose?.()
+      try { this.onDispose() }
+      finally { this.ownedQuery.dispose?.() }
     }
   }
 }

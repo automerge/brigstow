@@ -135,10 +135,18 @@ for the updated local snapshot, and schedules background sync. Standalone handle
 opened directly with `SubductionSedimentreeHandle.open()` retain store-and-sync
 behavior. Failed writes may still have persisted part of a batch.
 
-Core Brigstow subscribes to the sedimentree handle before initial loading. Incoming
-records merge into the current CRDT state, preserving concurrent local edits, and
-emit document changes only when logical heads change. Incoming data is already
-persisted by Subduction; applying it to the document does not write an echo.
+Each core Brigstow repo owns a `RefreshScheduler`. It subscribes to sedimentree
+handles before initial loading, coalesces notifications, and serializes reads per
+handle without blocking unrelated documents. `DocHandle` only merges the loaded
+records into its current CRDT state, preserving concurrent local edits, and emits
+changes when logical heads change. Incoming data is already persisted by Subduction;
+applying it to the document does not write an echo.
+
+Scheduler registrations weakly reference handles. Aborting an initial find removes
+its unfinished registration; disposing the query after a successful find does not
+stop the returned handle. `repo.dispose()` stops all of that repo's refreshes and
+rejects further lookups/creates. It neither cancels local saves nor shuts down the
+externally supplied source; call `source.shutdown()` separately when appropriate.
 
 The current implementation reloads metadata from storage rather than duplicating
 Subduction's minimization logic. It can expose redundant persisted records and

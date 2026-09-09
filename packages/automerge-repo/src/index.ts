@@ -30,4 +30,9 @@ export class Repo {
   create<T extends Record<string, unknown>>(val: T): Promise<DocHandle<T>> {
     return this.#repo.create(amDocType<T>(), val)
   }
+
+  /** Stop document refreshes without shutting down the externally owned source. */
+  dispose(): void {
+    this.#repo.dispose()
+  }
 }

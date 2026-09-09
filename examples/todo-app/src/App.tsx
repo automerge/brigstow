@@ -21,6 +21,7 @@ type TodoHandle = DocHandle<TodoDocument>
 export default function App() {
   let handle: TodoHandle | undefined
   let source: SubductionSource | undefined
+  let repo: Repo | undefined
   let disposed = false
   let input: HTMLInputElement | undefined
   let removeHandleListener: (() => void) | undefined
@@ -64,6 +65,7 @@ export default function App() {
   onCleanup(() => {
     disposed = true
     removeHandleListener?.()
+    repo?.dispose()
     window.removeEventListener("beforeunload", warnUnsavedChanges)
     void source?.shutdown().catch(error => console.error("Unable to stop synchronization", error))
   })
@@ -105,7 +107,8 @@ export default function App() {
         })
       }
       if (disposed) { await source.shutdown(); return }
-      const repo = new Repo(source)
+      repo?.dispose()
+      repo = new Repo(source)
       const existingDocumentId = documentIdFromHash(window.location.hash)
       const resolvedHandle = existingDocumentId
         ? await repo.find<TodoDocument>("automerge:" + existingDocumentId as AutomergeUrl)
