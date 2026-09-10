@@ -2,86 +2,73 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { onRequested, onStart, onCompleted, onContinue, onRemoved } from "../dist/RefreshScheduler.js"
 
-const row = () => ({ active: true, initial: "pending", work: { phase: "idle" } })
+const row = () => ({ active: true, initialLoad: { status: "pending" }, work: { phase: "idle" } })
 const ok = { ok: true }
-const abort = new Error("unscheduled")
+const abort = { status: "aborted", error: new Error("unscheduled") }
 
-// A recording-only effects interface tests the state functions without IO.
-// Scheduler integration tests exercise the real buffered update boundary.
-function update(state, change, ...args) {
-  const calls = []
-  const effects = {
-    queueStart: () => calls.push({ type: "queue-start" }),
-    read: () => calls.push({ type: "read" }),
-    continue: () => calls.push({ type: "continue" }),
-    resolve: () => calls.push({ type: "resolve" }),
-    reject: error => calls.push({ type: "reject", error }),
-    detach: () => calls.push({ type: "detach" }),
-    report: error => calls.push({ type: "report", error }),
-  }
-  assert.equal(change(state, effects, ...args), undefined)
-  return calls
-}
-
+// The transitions return their effects as data, so they can be checked without
+// IO. Scheduler integration tests exercise the real update boundary.
 function start(state) {
-  assert.deepEqual(update(state, onRequested), [{ type: "queue-start" }])
-  assert.deepEqual(update(state, onStart), [{ type: "read" }])
+  assert.deepEqual(onRequested(state), [{ type: "queueStart" }])
+  assert.deepEqual(onStart(state), [{ type: "read" }])
   assert.deepEqual(state.work, { phase: "reading", dirty: false })
 }
 
 function ready(state) {
   start(state)
-  assert.deepEqual(update(state, onCompleted, ok), [{ type: "continue" }])
-  assert.deepEqual(update(state, onContinue), [{ type: "resolve" }])
-  assert.equal(state.initial, "ready")
+  assert.deepEqual(onCompleted(state, ok), [{ type: "continue" }])
+  assert.deepEqual(onContinue(state), [{ type: "resolve" }])
+  assert.equal(state.initialLoad.status, "ready")
 }
 
-test("requests coalesce in queued, reading, and after phases without overlapping reads", () => {
+test("requests coalesce in queued, reading, and settling phases without overlapping reads", () => {
   const state = row()
-  assert.deepEqual(update(state, onRequested), [{ type: "queue-start" }])
+  assert.deepEqual(onRequested(state), [{ type: "queueStart" }])
   for (let i = 0; i < 5; i++) {
-    assert.deepEqual(update(state, onRequested), [])
+    assert.deepEqual(onRequested(state), [])
     assert.deepEqual(state.work, { phase: "queued" })
   }
-  assert.deepEqual(update(state, onStart), [{ type: "read" }])
-  assert.deepEqual(update(state, onStart), [], "a second start cannot replace a read")
-  for (const phase of ["reading", "after"]) {
-    for (let i = 0; i < 5; i++) assert.deepEqual(update(state, onRequested), [])
+  assert.deepEqual(onStart(state), [{ type: "read" }])
+  assert.deepEqual(onStart(state), [], "a second start cannot replace a read")
+  for (const phase of ["reading", "settling"]) {
+    for (let i = 0; i < 5; i++) assert.deepEqual(onRequested(state), [])
     assert.deepEqual(state.work, { phase, dirty: true })
-    if (phase === "reading") assert.deepEqual(update(state, onCompleted, ok), [{ type: "continue" }])
+    if (phase === "reading") assert.deepEqual(onCompleted(state, ok), [{ type: "continue" }])
   }
-  assert.deepEqual(update(state, onContinue), [{ type: "read" }])
+  assert.deepEqual(onContinue(state), [{ type: "read" }])
   assert.deepEqual(state.work, { phase: "reading", dirty: false })
-  assert.equal(state.initial, "pending")
-  assert.deepEqual(update(state, onCompleted, ok), [{ type: "continue" }])
-  assert.deepEqual(update(state, onContinue), [{ type: "resolve" }])
-  assert.deepEqual(state, { active: true, initial: "ready", work: { phase: "idle" } })
+  assert.equal(state.initialLoad.status, "pending")
+  assert.deepEqual(onCompleted(state, ok), [{ type: "continue" }])
+  assert.deepEqual(onContinue(state), [{ type: "resolve" }])
+  assert.deepEqual(state, { active: true, initialLoad: { status: "ready" }, work: { phase: "idle" } })
 })
 
 test("a read cannot continue before application has delivered its outcome", () => {
   const state = row()
   start(state)
-  assert.deepEqual(update(state, onContinue), [])
-  update(state, onRequested) // A notification from application or outstanding IO.
-  update(state, onCompleted, ok)
-  assert.deepEqual(state.work, { phase: "after", dirty: true })
-  assert.deepEqual(update(state, onContinue), [{ type: "read" }])
-  assert.equal(state.initial, "pending")
+  assert.deepEqual(onContinue(state), [])
+  onRequested(state) // A notification from application or outstanding IO.
+  onCompleted(state, ok)
+  assert.deepEqual(state.work, { phase: "settling", dirty: true })
+  assert.deepEqual(onContinue(state), [{ type: "read" }])
+  assert.equal(state.initialLoad.status, "pending")
 })
 
 test("an initial failure invalidates the row before rejection and detachment effects", () => {
   const state = row()
   const error = new Error("read/apply failed")
   start(state)
-  update(state, onRequested)
-  assert.deepEqual(update(state, onCompleted, { ok: false, error }), [
+  onRequested(state)
+  assert.deepEqual(onCompleted(state, { ok: false, error }), [
     { type: "reject", error }, { type: "detach" }, { type: "continue" },
   ])
-  assert.deepEqual(state, { active: false, initial: "failed", work: { phase: "after", dirty: false } })
-  assert.deepEqual(update(state, onRequested), [])
-  assert.deepEqual(update(state, onContinue), [])
-  assert.deepEqual(update(state, onRemoved, abort, "aborted"), [])
-  assert.equal(state.initial, "failed")
+  assert.deepEqual(state, {
+    active: false, initialLoad: { status: "failed" }, work: { phase: "settling", dirty: false },
+  })
+  assert.deepEqual(onRequested(state), [])
+  assert.deepEqual(onContinue(state), [])
+  assert.deepEqual(onRemoved(state, abort), [])
+  assert.equal(state.initialLoad.status, "failed")
 })
 
 test("background failure reports without retrying itself or changing initial readiness", () => {
@@ -89,12 +76,12 @@ test("background failure reports without retrying itself or changing initial rea
   ready(state)
   start(state)
   const error = new Error("background failure")
-  assert.deepEqual(update(state, onCompleted, { ok: false, error }), [
+  assert.deepEqual(onCompleted(state, { ok: false, error }), [
     { type: "report", error }, { type: "continue" },
   ])
-  assert.equal(state.initial, "ready")
+  assert.equal(state.initialLoad.status, "ready")
   assert.equal(state.active, true)
-  assert.deepEqual(update(state, onContinue), [])
+  assert.deepEqual(onContinue(state), [])
   assert.deepEqual(state.work, { phase: "idle" })
   start(state) // Only another notification starts the retry.
 })
@@ -104,37 +91,39 @@ for (const callback of ["request", "remove"]) {
     const state = row()
     ready(state)
     start(state)
-    update(state, onCompleted, { ok: false, error: new Error("failure") })
-    // Flushing report can trigger a separate update before continue is flushed.
-    if (callback === "request") update(state, onRequested)
-    else assert.deepEqual(update(state, onRemoved, abort, "aborted"), [{ type: "detach" }])
-    assert.deepEqual(update(state, onContinue), callback === "request" ? [{ type: "read" }] : [])
-    assert.equal(state.initial, "ready")
+    onCompleted(state, { ok: false, error: new Error("failure") })
+    // Running the report effect can trigger a separate update before continue runs.
+    if (callback === "request") onRequested(state)
+    else assert.deepEqual(onRemoved(state, abort), [{ type: "detach" }])
+    assert.deepEqual(onContinue(state), callback === "request" ? [{ type: "read" }] : [])
+    assert.equal(state.initialLoad.status, "ready")
   })
 }
 
 test("removal keeps queued work identifiable but start performs no IO", () => {
   const state = row()
-  update(state, onRequested)
-  assert.deepEqual(update(state, onRemoved, abort, "aborted"), [
-    { type: "reject", error: abort }, { type: "detach" },
+  onRequested(state)
+  assert.deepEqual(onRemoved(state, abort), [
+    { type: "reject", error: abort.error }, { type: "detach" },
   ])
   assert.deepEqual(state.work, { phase: "queued" })
-  assert.deepEqual(update(state, onStart), [])
+  assert.deepEqual(onStart(state), [])
   assert.deepEqual(state.work, { phase: "idle" })
-  assert.equal(state.initial, "aborted")
+  assert.equal(state.initialLoad.status, "aborted")
 })
 
 for (const outcome of [ok, { ok: false, error: new Error("obsolete") }]) {
   test(`old-row completion (${outcome.ok ? "success" : "failure"}) cannot affect a replacement`, () => {
     const old = row(), replacement = row()
     start(old)
-    update(old, onRequested)
-    update(old, onRemoved, abort, "aborted")
+    onRequested(old)
+    onRemoved(old, abort)
     start(replacement)
-    assert.deepEqual(update(old, onCompleted, outcome), [{ type: "continue" }])
-    assert.deepEqual(update(old, onContinue), [])
-    assert.deepEqual(old, { active: false, initial: "aborted", work: { phase: "idle" } })
-    assert.deepEqual(replacement, { active: true, initial: "pending", work: { phase: "reading", dirty: false } })
+    assert.deepEqual(onCompleted(old, outcome), [{ type: "continue" }])
+    assert.deepEqual(onContinue(old), [])
+    assert.deepEqual(old, { active: false, initialLoad: { status: "aborted" }, work: { phase: "idle" } })
+    assert.deepEqual(replacement, {
+      active: true, initialLoad: { status: "pending" }, work: { phase: "reading", dirty: false },
+    })
   })
 }

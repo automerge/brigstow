@@ -39,6 +39,7 @@ export interface SedimentreeHandle {
   off(event: "change", listener: () => void): void
 }
 
+
 export interface SedimentreeCreateRequest {
   /** Stable name of the document type, e.g. "automerge". */
   documentType: string

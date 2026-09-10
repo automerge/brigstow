@@ -17,8 +17,8 @@ EXTENDS Naturals, FiniteSets, TLC
  phase describes the asynchronous control flow:
    queued  -- microtask scheduled, running already true
    reading -- captured a batch; source IO / refresh outcome outstanding
-   after   -- refresh settled; drain's await continuation is pending
-   idle    -- no drain running (also used before registration)
+   settling -- refresh outcome known; error callbacks may run before Continue
+   idle    -- no pass queued or outstanding (also used before registration)
  Synchronous source calls and callbacks are abstracted as non-reentrant;
  subscription installation/removal is assumed to succeed. A failed refresh may
  throw before merging, or after merging (e.g. a document change listener throws).
@@ -128,7 +128,7 @@ Complete(r, ok, mergeOnFailure) ==
   /\ ok \/ AllowFailures
   /\ LET x == reg[r]
          merge == x.active /\ (ok \/ mergeOnFailure)
-         done == [x EXCEPT !.phase = "after", !.batch = {},
+         done == [x EXCEPT !.phase = "settling", !.batch = {},
                            !.delivered = IF merge
                              THEN x.delivered \cup x.batch ELSE x.delivered]
          outcome == IF ~x.active THEN done
@@ -147,11 +147,11 @@ CompleteRead(r) ==
   \/ Complete(r, FALSE, FALSE)
   \/ Complete(r, FALSE, TRUE)
 
-(* #drain after await: consume the next dirty pass, or settle initial loading
-   and release running. A failed background read retains any intervening dirty
+(* onContinue: consume the next dirty pass, or settle initial loading and
+   release running. A failed background read retains any intervening dirty
    notification; it does not itself request a retry. *)
 Continue(r) ==
-  /\ reg[r].phase = "after"
+  /\ reg[r].phase = "settling"
   /\ LET x == reg[r]
          settle == x.active /\ ~x.dirty /\ x.result = "pending"
      IN reg' = [reg EXCEPT ![r] =
@@ -209,7 +209,7 @@ TypeOK ==
   /\ reg \in [Regs ->
        [active : BOOLEAN, subscribed : BOOLEAN, source : Sources \cup {NoSource},
         dirty : BOOLEAN, running : BOOLEAN,
-        phase : {"idle", "queued", "reading", "after"},
+        phase : {"idle", "queued", "reading", "settling"},
         result : {"unused", "pending", "ready", "failed", "aborted"},
         batch : SUBSET Records, demand : SUBSET Records,
         readyDemand : SUBSET Records, delivered : SUBSET Records,
@@ -269,7 +269,7 @@ PromiseSettlesOnce ==
 
 NoUnrequestedRetry ==
   [][\A r \in Regs :
-       reg[r].active /\ reg[r].phase = "after"
+       reg[r].active /\ reg[r].phase = "settling"
        /\ reg[r].lastFailed /\ ~reg[r].dirty => reg'[r].phase # "reading"]_vars
 
 (* A read is a single immutable slot per registration, not a global lock.
