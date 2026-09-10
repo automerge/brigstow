@@ -8,25 +8,34 @@ export interface RefreshSchedulerOptions {
 }
 
 /**
- * A SedimentreeHandle synchronously tells us that its contents have changed, but
- * reading the corresponding records is asynchronous. RefreshScheduler bridges
- * that gap so a DocHandle's in-memory document catches up with its source. Each
- * Repo owns one; it coordinates source-to-document reads, not network sync or
- * the persistence of local edits.
+ * This class exists in order to bridge an irritating gap between the 
+ * `SedimentreeSource` and the `DocHandle`.
  *
- * While a read is outstanding, more notifications may arrive. Rather than start
- * overlapping reads for the same registration, we coalesce those notifications
- * into a dirty flag and make another pass afterward. Meanwhile, the application
- * may edit the document or remove its registration. Loaded records therefore
- * merge into the document's current state, and results from a removed registration
- * are ignored—even if the same handle has since been registered again. Unrelated
- * registrations can progress independently.
+ * The `SedimentreeHandle` which we get from `SedimenteeSource` looks like this
  *
- * Initial loading is the same process, with a promise attached. We subscribe
- * before the first read so arrivals during loading aren't missed, and resolve
- * only once the notified follow-up work has also been drained. The explicit row
- * state and the transition functions below keep these decisions separate from
- * the IO that eventually supplies their outcomes.
+ * export interface SedimentreeHandle {
+ *   ...
+ *
+ *   // Load the metadata (boundaries) of fragments and commits in the tree
+ *   metadata(opts?: { notAncestorsOf?: string[] }): Iterable<SedimentreeMeta>
+ *
+ *   // Load the actual data of commits and fragments, as identified by the
+ *   // metadata
+ *   materialize(metas: SedimentreeMeta[]): Promise<Uint8Array[]>
+ *   
+ *   // Persiste and sync new records
+ *   apply(records: SedimentreeRecord[]): Promise<void>
+ *   ...
+ * }
+ *
+ * The problem here is that `metadata` is synchronous (and we also receive
+ * notifications about new content synchronously), but `materialize` and 
+ * `apply` are asynchronous.
+ *
+ * The asynchronicity of these two methods means that we need to manage
+ * dispatching effects and responding to them some time later. The details
+ * of this are best captured by the comments on `RefreshState`
+ *
  */
 export class RefreshScheduler {
   #handles = new WeakMap<DocHandle<any>, RegistrationRow>()
